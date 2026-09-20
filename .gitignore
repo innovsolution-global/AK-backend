@@ -1,0 +1,39 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+
+# Environnement — ne jamais committer de secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Données locales
+docker-data/
+uploads/
+tmp/
+
+# Outils de développement locaux (binaires tiers, données de stockage)
+.devtools/*.exe
+.devtools/data/
+.devtools/mailpit.db
+.devtools/s3-config.json
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Tests
+test-results/
+playwright-report/
+*.tsbuildinfo

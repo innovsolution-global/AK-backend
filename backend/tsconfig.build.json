@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    // `nest build` vide `dist` avant de compiler. Avec le mode incrémental,
+    // TypeScript se fie à son `.tsbuildinfo`, considère la sortie à jour et
+    // n'émet plus rien : le build « réussit » en laissant un dist vide.
+    "incremental": false
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "prisma",
+    "test",
+    "**/*.spec.ts",
+    "**/*.e2e-spec.ts"
+  ]
+}

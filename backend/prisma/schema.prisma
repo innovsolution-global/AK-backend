@@ -1,0 +1,824 @@
+// ---------------------------------------------------------------------------
+// AK IMMO — schéma Prisma
+// Plateforme privée de gestion de patrimoine immobilier.
+//
+// Conventions :
+//  - PK en UUID v4, horodatages en timestamptz
+//  - soft delete (deletedAt / deletedById) sur les données patrimoniales
+//  - noms de tables/colonnes en snake_case via @map / @@map
+//  - audit_logs et project_status_history sont append-only
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+// ENUMS
+// ===========================================================================
+
+enum LocationType {
+  PREFECTURE
+  VILLE
+  COMMUNE
+}
+
+/// §10 — statuts des terrains
+enum PropertyStatus {
+  NON_AMENAGE
+  EN_AMENAGEMENT
+  AMENAGE
+  EN_PROJET
+  EN_LITIGE
+  VENDU
+  TRANSFERE
+  AUTRE
+}
+
+enum AreaUnit {
+  M2
+  ARE
+  HECTARE
+}
+
+/// §13 — types de documents des terrains
+enum PropertyDocumentType {
+  DONATION
+  PLAN_DE_MASSE
+  TITRE_FONCIER
+  ACTE_DE_VENTE
+  CONVENTION
+  CERTIFICAT
+  PLAN_CADASTRAL
+  AUTRE
+}
+
+/// §12 — fichiers Google Earth
+enum GeoFileFormat {
+  KML
+  KMZ
+}
+
+enum GeoExtractionStatus {
+  PENDING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+/// §21 — cycle de vie d'un partage
+enum ShareStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+/// §18 — statuts des projets
+enum ProjectStatus {
+  IDEE
+  ETUDE_PRELIMINAIRE
+  EN_ETUDE
+  CONCEPTION
+  EN_ATTENTE_PERMIS
+  PERMIS_OBTENU
+  TRAVAUX_PREPARATION
+  TRAVAUX_EN_COURS
+  SUSPENDU
+  TERMINE
+  ABANDONNE
+}
+
+/// §15 — composantes des projets
+enum ProjectComponentType {
+  ECOLE
+  HOTEL
+  RESTAURATION
+  LOISIRS
+  RESIDENCE
+  COMMERCE
+  BUREAUX
+  PARKING
+  SANTE
+  SPORT
+  AGRICULTURE
+  INDUSTRIE
+  AUTRE
+}
+
+enum ComponentStatus {
+  PLANIFIE
+  EN_ETUDE
+  EN_CONSTRUCTION
+  TERMINE
+  SUSPENDU
+  ABANDONNE
+}
+
+/// §16 — dossiers d'études
+enum ProjectDocumentType {
+  ETUDE_TOPOGRAPHIQUE
+  ETUDE_GEOTECHNIQUE
+  PLAN_CONSTRUCTION
+  PLAN_ARCHITECTURAL
+  ETUDE_ENVIRONNEMENTALE
+  PLAN_ELECTRIQUE
+  PLAN_PLOMBERIE
+  PERMIS
+  AUTRE
+}
+
+/// §17 — permis de construire
+enum BuildingPermitStatus {
+  EN_ATTENTE
+  EN_ETUDE
+  APPROUVE
+  REFUSE
+  EXPIRE
+  ANNULE
+}
+
+/// §26 — actions auditées
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  UPLOAD
+  DOWNLOAD
+  SHARE
+  REVOKE_SHARE
+  VIEW
+  PASSWORD_CHANGE
+}
+
+/// §27 — notifications
+enum NotificationType {
+  SHARE_CREATED
+  SHARE_ACCEPTED
+  SHARE_EXPIRING
+  SHARE_REVOKED
+  DOCUMENT_ADDED
+  PROJECT_STATUS_CHANGED
+  PERMIT_OBTAINED
+  PERMIT_EXPIRING
+}
+
+enum TokenPurpose {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+  SHARE_ACTIVATION
+}
+
+// ===========================================================================
+// IDENTITÉ & ACCÈS
+// ===========================================================================
+
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  /// Toujours stocké en minuscules (normalisation applicative).
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  firstName           String    @map("first_name")
+  lastName            String    @map("last_name")
+  phone               String?
+  isActive            Boolean   @default(true) @map("is_active")
+  emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  /// §21 — imposé après un mot de passe temporaire
+  mustChangePassword  Boolean   @default(false) @map("must_change_password")
+  lastLoginAt         DateTime? @map("last_login_at") @db.Timestamptz(3)
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until") @db.Timestamptz(3)
+  /// Incrémenté pour invalider immédiatement tous les access tokens émis.
+  tokenVersion        Int       @default(0) @map("token_version")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  roles             UserRole[]
+  refreshTokens     RefreshToken[]
+  temporaryTokens   TemporaryAccessToken[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  managedProperties PropertyManager[]      @relation("PropertyManagerUser")
+  managerAssignedBy PropertyManager[]      @relation("PropertyManagerAssignedBy")
+  managedProjects   Project[]              @relation("ProjectManager")
+  sharesReceived    PropertyShare[]        @relation("ShareBeneficiary")
+  sharesCreated     PropertyShare[]        @relation("ShareCreatedBy")
+  sharesRevoked     PropertyShare[]        @relation("ShareRevokedBy")
+  propertiesCreated Property[]             @relation("PropertyCreatedBy")
+  propertiesUpdated Property[]             @relation("PropertyUpdatedBy")
+  projectsCreated   Project[]              @relation("ProjectCreatedBy")
+  projectsUpdated   Project[]              @relation("ProjectUpdatedBy")
+  propertyDocuments PropertyDocument[]     @relation("PropertyDocumentUploader")
+  projectDocuments  ProjectDocument[]      @relation("ProjectDocumentUploader")
+  geoFiles          PropertyGeoFile[]      @relation("GeoFileUploader")
+  statusChanges     ProjectStatusHistory[] @relation("StatusChangedBy")
+  rolesAssigned     UserRole[]             @relation("UserRoleAssignedBy")
+
+  @@index([deletedAt])
+  @@index([isActive])
+  @@map("users")
+}
+
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  /// ADMIN | GESTIONNAIRE | CONSULTANT | UTILISATEUR_PARTAGE
+  code        String  @unique
+  name        String
+  description String?
+  /// Un rôle système ne peut être ni renommé ni supprimé.
+  isSystem    Boolean @default(false) @map("is_system")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  /// Forme « resource.action », ex. property.update
+  code        String  @unique
+  resource    String
+  action      String
+  description String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId       String   @map("user_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  assignedById String?  @map("assigned_by") @db.Uuid
+
+  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("UserRoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+/// §8 — rotation des refresh tokens avec détection de réutilisation par famille.
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  /// SHA-256 du token opaque ; le token en clair n'est jamais stocké.
+  tokenHash    String    @unique @map("token_hash")
+  familyId     String    @map("family_id") @db.Uuid
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedById String?   @unique @map("replaced_by_id") @db.Uuid
+  ip           String?
+  userAgent    String?   @map("user_agent")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("TokenRotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replaces   RefreshToken? @relation("TokenRotation")
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// Tokens à usage unique : réinitialisation de mot de passe, vérification d'email,
+/// activation d'un partage (§21).
+model TemporaryAccessToken {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String?      @map("user_id") @db.Uuid
+  purpose   TokenPurpose
+  tokenHash String       @unique @map("token_hash")
+  expiresAt DateTime     @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime?    @map("used_at") @db.Timestamptz(3)
+  metadata  Json?
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("temporary_access_tokens")
+}
+
+// ===========================================================================
+// GÉOGRAPHIE & PATRIMOINE
+// ===========================================================================
+
+/// §6 — Préfecture / Ville / Commune (hiérarchie auto-référente).
+model Location {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  code        String       @unique
+  type        LocationType @default(VILLE)
+  parentId    String?      @map("parent_id") @db.Uuid
+  country     String       @default("GN")
+  region      String?
+  latitude    Decimal?     @db.Decimal(10, 7)
+  longitude   Decimal?     @db.Decimal(10, 7)
+  description String?
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  parent     Location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children   Location[] @relation("LocationHierarchy")
+  sites      Site[]
+  properties Property[]
+  projects   Project[]
+
+  @@index([parentId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("locations")
+}
+
+/// §6 — Site / Quartier, rattaché à une ville.
+model Site {
+  id          String   @id @default(uuid()) @db.Uuid
+  locationId  String   @map("location_id") @db.Uuid
+  name        String
+  code        String   @unique
+  description String?
+  latitude    Decimal? @db.Decimal(10, 7)
+  longitude   Decimal? @db.Decimal(10, 7)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  location   Location   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  properties Property[]
+  projects   Project[]
+
+  @@index([locationId])
+  @@index([deletedAt])
+  @@map("sites")
+}
+
+/// §9 — Terrain / Domaine.
+model Property {
+  id            String         @id @default(uuid()) @db.Uuid
+  /// Référence automatique, ex. AK-IMM-000001 (séquence PostgreSQL).
+  reference     String         @unique
+  name          String
+  locationId    String         @map("location_id") @db.Uuid
+  siteId        String?        @map("site_id") @db.Uuid
+  area          Decimal        @db.Decimal(14, 2)
+  areaUnit      AreaUnit       @default(M2) @map("area_unit")
+  /// Superficie normalisée en m², recalculée à chaque écriture.
+  /// Permet de filtrer, trier et totaliser des terrains saisis dans des unités
+  /// différentes sans conversion à la volée dans chaque requête.
+  areaSqm       Decimal        @db.Decimal(16, 2) @map("area_sqm")
+  purchaseDate  DateTime?      @map("purchase_date") @db.Date
+  /// Sessionnaire / vendeur
+  sellerName    String?        @map("seller_name")
+  sellerContact String?        @map("seller_contact")
+  status        PropertyStatus @default(NON_AMENAGE)
+  description   String?
+  notes         String?
+  googleMapsUrl String?        @map("google_maps_url")
+  googleEarthUrl String?       @map("google_earth_url")
+
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  location    Location             @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  site        Site?                @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  createdBy   User?                @relation("PropertyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?                @relation("PropertyUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  coordinates PropertyCoordinate[]
+  documents   PropertyDocument[]
+  geoFiles    PropertyGeoFile[]
+  managers    PropertyManager[]
+  shares      PropertyShare[]
+  projects    Project[]
+
+  @@index([locationId])
+  @@index([siteId])
+  @@index([status])
+  @@index([deletedAt])
+  @@index([status, locationId])
+  @@index([areaSqm])
+  @@map("properties")
+}
+
+/// §11 — points géographiques d'un terrain (point principal + bornes de l'emprise).
+model PropertyCoordinate {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  label      String?
+  latitude   Decimal  @db.Decimal(10, 7)
+  longitude  Decimal  @db.Decimal(10, 7)
+  altitude   Decimal? @db.Decimal(8, 2)
+  pointOrder Int      @default(0) @map("point_order")
+  /// Point affiché sur la carte générale — un seul par terrain.
+  isPrimary  Boolean  @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, pointOrder])
+  @@map("property_coordinates")
+}
+
+/// Périmètre du rôle GESTIONNAIRE : biens explicitement attribués.
+model PropertyManager {
+  propertyId   String   @map("property_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  assignedById String?  @map("assigned_by") @db.Uuid
+
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  user       User     @relation("PropertyManagerUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User?    @relation("PropertyManagerAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([propertyId, userId])
+  @@index([userId])
+  @@map("property_managers")
+}
+
+/// §13 — documents d'un terrain, versionnés (jamais d'écrasement).
+model PropertyDocument {
+  id               String               @id @default(uuid()) @db.Uuid
+  propertyId       String               @map("property_id") @db.Uuid
+  name             String
+  type             PropertyDocumentType @default(AUTRE)
+  fileName         String               @map("file_name")
+  mimeType         String               @map("mime_type")
+  size             BigInt
+  /// Clé opaque du stockage objet — jamais exposée par l'API.
+  storageKey       String               @unique @map("storage_key")
+  checksum         String?
+  version          Int                  @default(1)
+  parentDocumentId String?              @map("parent_document_id") @db.Uuid
+  isCurrentVersion Boolean              @default(true) @map("is_current_version")
+  uploadedById     String?              @map("uploaded_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  property       Property                @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  uploadedBy     User?                   @relation("PropertyDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  parentDocument PropertyDocument?       @relation("DocumentVersions", fields: [parentDocumentId], references: [id], onDelete: Cascade)
+  versions       PropertyDocument[]      @relation("DocumentVersions")
+  sharedIn       PropertyShareDocument[]
+
+  @@index([propertyId, isCurrentVersion])
+  @@index([type])
+  @@index([parentDocumentId])
+  @@index([deletedAt])
+  @@map("property_documents")
+}
+
+/// §12 — import Google Earth (.KML / .KMZ) associé à un domaine.
+model PropertyGeoFile {
+  id                String              @id @default(uuid()) @db.Uuid
+  propertyId        String              @map("property_id") @db.Uuid
+  fileName          String              @map("file_name")
+  format            GeoFileFormat
+  mimeType          String              @map("mime_type")
+  size              BigInt
+  storageKey        String              @unique @map("storage_key")
+  checksum          String?
+  featureCount      Int?                @map("feature_count")
+  /// Bounding box extraite : { minLat, minLng, maxLat, maxLng }
+  bounds            Json?
+  /// GeoJSON extrait lorsque l'analyse réussit.
+  extractedGeometry Json?               @map("extracted_geometry")
+  extractionStatus  GeoExtractionStatus @default(PENDING) @map("extraction_status")
+  extractionError   String?             @map("extraction_error")
+  uploadedById      String?             @map("uploaded_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  uploadedBy User?    @relation("GeoFileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([propertyId])
+  @@index([deletedAt])
+  @@map("property_geo_files")
+}
+
+/// §20-21 — partage sécurisé d'un bien.
+model PropertyShare {
+  id                    String      @id @default(uuid()) @db.Uuid
+  propertyId            String      @map("property_id") @db.Uuid
+  beneficiaryFirstName  String      @map("beneficiary_first_name")
+  beneficiaryLastName   String      @map("beneficiary_last_name")
+  beneficiaryEmail      String      @map("beneficiary_email")
+  beneficiaryPhone      String?     @map("beneficiary_phone")
+  message               String?
+  /// Compte créé/rattaché au bénéficiaire, renseigné à l'activation.
+  userId                String?     @map("user_id") @db.Uuid
+  /// SHA-256 du token d'invitation ; le token en clair n'existe que dans l'email.
+  tokenHash             String      @unique @map("token_hash")
+  status                ShareStatus @default(PENDING)
+  expiresAt             DateTime    @map("expires_at") @db.Timestamptz(3)
+  activatedAt           DateTime?   @map("activated_at") @db.Timestamptz(3)
+  revokedAt             DateTime?   @map("revoked_at") @db.Timestamptz(3)
+  revokedById           String?     @map("revoked_by") @db.Uuid
+  createdById           String?     @map("created_by") @db.Uuid
+  lastAccessedAt        DateTime?   @map("last_accessed_at") @db.Timestamptz(3)
+
+  /// §22 — portée fine de ce que voit le bénéficiaire.
+  allowDocuments   Boolean @default(true) @map("allow_documents")
+  allowCoordinates Boolean @default(true) @map("allow_coordinates")
+  allowGoogleEarth Boolean @default(true) @map("allow_google_earth")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property    Property                @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  beneficiary User?                   @relation("ShareBeneficiary", fields: [userId], references: [id], onDelete: SetNull)
+  createdBy   User?                   @relation("ShareCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  revokedBy   User?                   @relation("ShareRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  documents   PropertyShareDocument[]
+
+  @@index([propertyId, status])
+  @@index([beneficiaryEmail])
+  @@index([status, expiresAt])
+  @@index([userId])
+  @@map("property_shares")
+}
+
+/// Liste blanche des documents visibles par un bénéficiaire.
+/// Sans ligne ici, aucun document n'est accessible.
+model PropertyShareDocument {
+  shareId    String @map("share_id") @db.Uuid
+  documentId String @map("document_id") @db.Uuid
+
+  share    PropertyShare    @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  document PropertyDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([shareId, documentId])
+  @@index([documentId])
+  @@map("property_share_documents")
+}
+
+// ===========================================================================
+// PROJETS
+// ===========================================================================
+
+/// §19 — entreprises / gérants.
+model Company {
+  id                 String  @id @default(uuid()) @db.Uuid
+  name               String
+  registrationNumber String? @map("registration_number")
+  taxNumber          String? @map("tax_number")
+  address            String?
+  phone              String?
+  email              String?
+  website            String?
+  contactPerson      String? @map("contact_person")
+  notes              String?
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  projects Project[]
+
+  @@index([deletedAt])
+  @@map("companies")
+}
+
+/// §14 — projet, éventuellement rattaché à un terrain.
+model Project {
+  id              String        @id @default(uuid()) @db.Uuid
+  /// Référence automatique, ex. AK-PRJ-000001.
+  reference       String        @unique
+  name            String
+  locationId      String        @map("location_id") @db.Uuid
+  siteId          String?       @map("site_id") @db.Uuid
+  propertyId      String?       @map("property_id") @db.Uuid
+  companyId       String?       @map("company_id") @db.Uuid
+  managerId       String?       @map("manager_id") @db.Uuid
+  description     String?
+  status          ProjectStatus @default(IDEE)
+  startDate       DateTime?     @map("start_date") @db.Date
+  expectedEndDate DateTime?     @map("expected_end_date") @db.Date
+  actualEndDate   DateTime?     @map("actual_end_date") @db.Date
+  notes           String?
+
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  location      Location               @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  site          Site?                  @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  property      Property?              @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  company       Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  manager       User?                  @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+  createdBy     User?                  @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     User?                  @relation("ProjectUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  components    ProjectComponent[]
+  documents     ProjectDocument[]
+  permits       BuildingPermit[]
+  statusHistory ProjectStatusHistory[]
+
+  @@index([locationId])
+  @@index([siteId])
+  @@index([propertyId])
+  @@index([companyId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("projects")
+}
+
+/// §15 — composantes d'un projet.
+model ProjectComponent {
+  id          String               @id @default(uuid()) @db.Uuid
+  projectId   String               @map("project_id") @db.Uuid
+  name        String
+  type        ProjectComponentType @default(AUTRE)
+  description String?
+  area        Decimal?             @db.Decimal(14, 2)
+  areaUnit    AreaUnit?            @map("area_unit")
+  status      ComponentStatus      @default(PLANIFIE)
+  notes       String?
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documents ProjectDocument[]
+
+  @@index([projectId])
+  @@index([deletedAt])
+  @@map("project_components")
+}
+
+/// §16 — dossiers d'études et plans, versionnés.
+model ProjectDocument {
+  id               String              @id @default(uuid()) @db.Uuid
+  projectId        String              @map("project_id") @db.Uuid
+  componentId      String?             @map("component_id") @db.Uuid
+  name             String
+  type             ProjectDocumentType @default(AUTRE)
+  fileName         String              @map("file_name")
+  mimeType         String              @map("mime_type")
+  size             BigInt
+  storageKey       String              @unique @map("storage_key")
+  checksum         String?
+  version          Int                 @default(1)
+  parentDocumentId String?             @map("parent_document_id") @db.Uuid
+  isCurrentVersion Boolean             @default(true) @map("is_current_version")
+  uploadedById     String?             @map("uploaded_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  component      ProjectComponent? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+  uploadedBy     User?             @relation("ProjectDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  parentDocument ProjectDocument?  @relation("ProjectDocumentVersions", fields: [parentDocumentId], references: [id], onDelete: Cascade)
+  versions       ProjectDocument[] @relation("ProjectDocumentVersions")
+  permits        BuildingPermit[]
+
+  @@index([projectId, isCurrentVersion])
+  @@index([componentId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("project_documents")
+}
+
+/// §17 — permis de construire.
+model BuildingPermit {
+  id         String               @id @default(uuid()) @db.Uuid
+  projectId  String               @map("project_id") @db.Uuid
+  number     String
+  issueDate  DateTime?            @map("issue_date") @db.Date
+  expiryDate DateTime?            @map("expiry_date") @db.Date
+  authority  String?
+  status     BuildingPermitStatus @default(EN_ATTENTE)
+  documentId String?              @map("document_id") @db.Uuid
+  notes      String?
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  deletedById String?   @map("deleted_by") @db.Uuid
+
+  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document ProjectDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([status])
+  @@index([expiryDate])
+  @@map("building_permits")
+}
+
+/// §18 — historique des statuts. Append-only : jamais d'UPDATE ni de DELETE.
+model ProjectStatusHistory {
+  id          String         @id @default(uuid()) @db.Uuid
+  projectId   String         @map("project_id") @db.Uuid
+  fromStatus  ProjectStatus? @map("from_status")
+  toStatus    ProjectStatus  @map("to_status")
+  comment     String?
+  changedById String?        @map("changed_by") @db.Uuid
+  changedAt   DateTime       @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation("StatusChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, changedAt])
+  @@map("project_status_history")
+}
+
+// ===========================================================================
+// TRANSVERSE
+// ===========================================================================
+
+/// §27 — notifications in-app.
+model Notification {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  type       NotificationType
+  title      String
+  message    String
+  entityType String?          @map("entity_type")
+  entityId   String?          @map("entity_id") @db.Uuid
+  readAt     DateTime?        @map("read_at") @db.Timestamptz(3)
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+/// §26 — journal d'audit. Append-only.
+model AuditLog {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String?     @map("user_id") @db.Uuid
+  action    AuditAction
+  entity    String
+  entityId  String?     @map("entity_id")
+  ip        String?
+  userAgent String?     @map("user_agent")
+  metadata  Json?
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([entity, entityId])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}

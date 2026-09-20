@@ -1,0 +1,124 @@
+name: ${COMPOSE_PROJECT_NAME:-ak-immo}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ak-immo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ak_immo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est requis}
+      POSTGRES_DB: ${POSTGRES_DB:-ak_immo}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ak_immo} -d ${POSTGRES_DB:-ak_immo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Stockage objet S3 compatible (§25) — remplacé par S3 en production.
+  minio:
+    image: minio/minio:latest
+    container_name: ak-immo-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ak_immo_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD est requis}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Crée le bucket privé au premier démarrage puis s'arrête.
+  minio-init:
+    image: minio/mc:latest
+    container_name: ak-immo-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 '${MINIO_ROOT_USER:-ak_immo_minio}' '${MINIO_ROOT_PASSWORD}';
+      mc mb --ignore-existing local/${S3_BUCKET:-ak-immo};
+      mc anonymous set none local/${S3_BUCKET:-ak-immo};
+      mc version enable local/${S3_BUCKET:-ak-immo};
+      echo 'Bucket ${S3_BUCKET:-ak-immo} prêt (privé, versionné).';
+      "
+
+  # Capture des emails de développement — aucun envoi réel.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ak-immo-mailpit
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: ak-immo-backend
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ak_immo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ak_immo}?schema=public
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-ak-immo}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-ak_immo_minio}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+    env_file:
+      - ./backend/.env
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/prisma:/app/prisma
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: ak-immo-frontend
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}/api
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend/src:/app/src
+
+volumes:
+  postgres-data:
+  minio-data:
