@@ -1,0 +1,20 @@
+# Contexte de build = racine du dépôt : on exclut tout ce qui n'entre pas dans
+# les images, pour garder le contexte léger et déterministe.
+node_modules
+*/node_modules
+*/dist
+*/coverage
+.devtools
+docs
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*/.env
+*/.env.*
+!*/.env.example
+*.log
+test-results
+playwright-report
+scripts/dev.mjs

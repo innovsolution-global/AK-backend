@@ -22,8 +22,11 @@ tmp/
 
 # Outils de développement locaux (binaires tiers, données de stockage)
 .devtools/*.exe
+.devtools/weed
+.devtools/mailpit
+.devtools/LICENSE
 .devtools/data/
-.devtools/mailpit.db
+.devtools/mailpit.db*
 .devtools/s3-config.json
 
 # IDE / OS

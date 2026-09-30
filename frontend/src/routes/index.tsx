@@ -25,6 +25,7 @@ const PropertyFormPage = lazy(() => import('@/pages/PropertyFormPage'));
 const MapPage = lazy(() => import('@/pages/MapPage'));
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
+const ProjectFormPage = lazy(() => import('@/pages/ProjectFormPage'));
 const LocationsPage = lazy(() => import('@/pages/LocationsPage'));
 const SitesPage = lazy(() => import('@/pages/SitesPage'));
 const CompaniesPage = lazy(() => import('@/pages/CompaniesPage'));
@@ -131,10 +132,26 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/projects/create"
+            element={
+              <PermissionRoute permission="project.create">
+                <ProjectFormPage mode="create" />
+              </PermissionRoute>
+            }
+          />
+          <Route
             path="/projects/:id"
             element={
               <PermissionRoute permission="project.read">
                 <ProjectDetailPage />
+              </PermissionRoute>
+            }
+          />
+          <Route
+            path="/projects/:id/edit"
+            element={
+              <PermissionRoute permission="project.update">
+                <ProjectFormPage mode="edit" />
               </PermissionRoute>
             }
           />

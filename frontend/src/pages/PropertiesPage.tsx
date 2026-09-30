@@ -31,7 +31,7 @@ export default function PropertiesPage() {
 
   const { data: locations } = useQuery({
     queryKey: queryKeys.locations.list({ limit: 100 }),
-    queryFn: () => locationsApi.list({ limit: 100, type: 'VILLE' }),
+    queryFn: () => locationsApi.all(),
   });
 
   // Les indicateurs de tête portent sur tout le périmètre, pas sur la page
@@ -203,7 +203,7 @@ export default function PropertiesPage() {
               className="pill-outline h-11 px-4 text-sm font-medium"
             >
               <option value="">Toutes les villes</option>
-              {locations?.data.map((location) => (
+              {locations?.map((location) => (
                 <option key={location.id} value={location.id}>
                   {location.name}
                 </option>

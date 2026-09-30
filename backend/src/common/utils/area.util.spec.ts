@@ -24,7 +24,7 @@ describe('area.util', () => {
   });
 
   describe('formatArea', () => {
-    it('affiche des m² en dessous d\'un hectare', () => {
+    it("affiche des m² en dessous d'un hectare", () => {
       expect(formatArea(2500)).toContain('m²');
     });
 

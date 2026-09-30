@@ -223,10 +223,7 @@ export class TokenService {
 
     const { count } = await this.prisma.refreshToken.deleteMany({
       where: {
-        OR: [
-          { expiresAt: { lt: threshold } },
-          { revokedAt: { lt: threshold } },
-        ],
+        OR: [{ expiresAt: { lt: threshold } }, { revokedAt: { lt: threshold } }],
       },
     });
 

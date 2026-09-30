@@ -49,13 +49,15 @@ export class KmlParserService {
   async parse(buffer: Buffer, format: 'KML' | 'KMZ'): Promise<ParsedGeoFile> {
     try {
       const xml =
-        format === 'KMZ' ? await this.extractKmlFromKmz(buffer) : buffer.toString('utf8');
+        format === 'KMZ' ? await this.extractKmlFromKmz(buffer) : decodeXml(buffer);
 
       if (!xml) {
         return this.failure("Aucun document KML trouvé dans l'archive.");
       }
 
-      return this.parseKml(xml);
+      // `await` obligatoire : renvoyer la promesse sans l'attendre ferait
+      // échapper un XML malformé au `catch` — 500 au lieu d'un statut FAILED.
+      return await this.parseKml(xml);
     } catch (error) {
       const message = (error as Error).message;
       this.logger.warn(`Extraction géographique impossible : ${message}`);
@@ -70,12 +72,9 @@ export class KmlParserService {
     // La convention Google Earth nomme le document principal `doc.kml`, mais
     // beaucoup d'exports utilisent un autre nom : on retombe sur le premier
     // `.kml` rencontré.
-    const entry =
-      zip.file(/^doc\.kml$/i)[0] ??
-      zip.file(/\.kml$/i)[0] ??
-      null;
+    const entry = zip.file(/^doc\.kml$/i)[0] ?? zip.file(/\.kml$/i)[0] ?? null;
 
-    return entry ? entry.async('string') : null;
+    return entry ? decodeXml(await entry.async('nodebuffer')) : null;
   }
 
   private async parseKml(xml: string): Promise<ParsedGeoFile> {
@@ -97,8 +96,8 @@ export class KmlParserService {
     let skipped = 0;
 
     for (const placemark of placemarks.slice(0, MAX_FEATURES)) {
-      const feature = this.toFeature(placemark);
-      if (feature) features.push(feature);
+      const extracted = this.toFeatures(placemark);
+      if (extracted.length > 0) features.push(...extracted);
       else skipped += 1;
     }
 
@@ -116,67 +115,108 @@ export class KmlParserService {
     };
   }
 
-  private toFeature(placemark: Record<string, unknown>): GeoJsonFeature | null {
+  /**
+   * Toutes les géométries d'un Placemark, y compris dans un `MultiGeometry`.
+   *
+   * Un géomètre livre souvent le polygone **et** une épingle au centre dans
+   * le même repère : ne garder que la première géométrie rencontrée aurait
+   * perdu l'emprise. Ordre de sortie : polygones, anneaux nus, lignes, points
+   * — celui que suit la reprise d'emprise.
+   */
+  private toFeatures(placemark: Record<string, unknown>): GeoJsonFeature[] {
     const properties = {
       name: this.firstString(placemark, 'name'),
       description: this.firstString(placemark, 'description'),
     };
 
-    const point = this.collect(placemark, 'Point')[0];
-    if (point) {
-      const coords = this.parseCoordinates(this.firstString(point, 'coordinates'));
-      if (coords.length > 0) {
-        return { type: 'Feature', properties, geometry: { type: 'Point', coordinates: coords[0] } };
-      }
+    const features: GeoJsonFeature[] = [];
+
+    const polygons = this.collect(placemark, 'Polygon');
+    const ringsInsidePolygons = new Set(
+      polygons.flatMap((polygon) => this.collect(polygon, 'LinearRing')),
+    );
+
+    for (const polygon of polygons) {
+      const outer = this.collect(polygon, 'outerBoundaryIs')[0];
+      // Sans `outerBoundaryIs`, certains outils placent l'anneau directement.
+      const ring = outer
+        ? this.collect(outer, 'LinearRing')[0]
+        : this.collect(polygon, 'LinearRing')[0];
+      const feature = this.polygonFeature(
+        this.parseCoordinates(ring ? this.firstString(ring, 'coordinates') : undefined),
+        properties,
+      );
+      if (feature) features.push(feature);
     }
 
-    const line = this.collect(placemark, 'LineString')[0];
-    if (line) {
+    // `LinearRing` hors de tout Polygon : un contour tracé comme un anneau.
+    for (const ring of this.collect(placemark, 'LinearRing')) {
+      if (ringsInsidePolygons.has(ring)) continue;
+      const feature = this.polygonFeature(
+        this.parseCoordinates(this.firstString(ring, 'coordinates')),
+        properties,
+      );
+      if (feature) features.push(feature);
+    }
+
+    for (const line of this.collect(placemark, 'LineString')) {
       const coords = this.parseCoordinates(this.firstString(line, 'coordinates'));
       if (coords.length >= 2) {
-        return {
+        features.push({
           type: 'Feature',
           properties,
           geometry: { type: 'LineString', coordinates: coords },
-        };
+        });
       }
     }
 
-    const polygon = this.collect(placemark, 'Polygon')[0];
-    if (polygon) {
-      const outer = this.collect(polygon, 'outerBoundaryIs')[0];
-      const ring = outer ? this.collect(outer, 'LinearRing')[0] : undefined;
-      const coords = this.parseCoordinates(
-        ring ? this.firstString(ring, 'coordinates') : undefined,
-      );
-
-      if (coords.length >= 3) {
-        // Un anneau GeoJSON doit être explicitement fermé.
-        const closed =
-          coords[0][0] === coords[coords.length - 1][0] &&
-          coords[0][1] === coords[coords.length - 1][1]
-            ? coords
-            : [...coords, coords[0]];
-
-        return {
+    for (const point of this.collect(placemark, 'Point')) {
+      const coords = this.parseCoordinates(this.firstString(point, 'coordinates'));
+      if (coords.length > 0) {
+        features.push({
           type: 'Feature',
           properties,
-          geometry: { type: 'Polygon', coordinates: [closed] },
-        };
+          geometry: { type: 'Point', coordinates: coords[0] },
+        });
       }
     }
 
-    return null;
+    return features;
+  }
+
+  private polygonFeature(
+    coords: number[][],
+    properties: GeoJsonFeature['properties'],
+  ): GeoJsonFeature | null {
+    if (coords.length < 3) return null;
+
+    // Un anneau GeoJSON doit être explicitement fermé.
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+    const closed =
+      first[0] === last[0] && first[1] === last[1] ? coords : [...coords, first];
+
+    // Trois sommets distincts au minimum, une fois fermé.
+    if (closed.length < 4) return null;
+
+    return {
+      type: 'Feature',
+      properties,
+      geometry: { type: 'Polygon', coordinates: [closed] },
+    };
   }
 
   /**
    * Les coordonnées KML s'écrivent `lon,lat[,alt]`, séparées par des espaces
    * ou des sauts de ligne — l'ordre est inverse de l'usage courant lat/lon.
+   * Certains outils insèrent des espaces après les virgules (`lon, lat`) :
+   * on les retire avant de découper sur les blancs.
    */
   private parseCoordinates(raw: string | undefined): number[][] {
     if (!raw) return [];
 
     return raw
+      .replace(/,\s+/g, ',')
       .split(/\s+/)
       .map((triple) => triple.trim())
       .filter(Boolean)
@@ -249,10 +289,7 @@ export class KmlParserService {
     return found;
   }
 
-  private firstString(
-    node: Record<string, unknown>,
-    key: string,
-  ): string | undefined {
+  private firstString(node: Record<string, unknown>, key: string): string | undefined {
     const value = node[key];
     const first = Array.isArray(value) ? value[0] : value;
 
@@ -274,4 +311,22 @@ export class KmlParserService {
       error,
     };
   }
+}
+
+/**
+ * Décode un document XML quel que soit son encodage de départ : UTF-8 avec ou
+ * sans BOM, UTF-16 LE/BE (exports SIG Windows). Un BOM laissé en tête ferait
+ * échouer l'analyseur sur « caractère avant la première balise ».
+ */
+export function decodeXml(buffer: Buffer): string {
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString('utf16le').trimStart();
+  }
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return Buffer.from(buffer.subarray(2)).swap16().toString('utf16le').trimStart();
+  }
+  if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString('utf8').trimStart();
+  }
+  return buffer.toString('utf8').trimStart();
 }

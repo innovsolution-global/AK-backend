@@ -134,10 +134,15 @@ Génération de la référence : séquence PostgreSQL dédiée `property_referen
 à un `MAX(reference)+1`.
 
 ### property_coordinates (§11)
-`id`, `property_id` (FK CASCADE), `label`, `latitude` numeric(10,7), `longitude` numeric(10,7),
+`id`, `property_id` (FK CASCADE), `label`, `latitude` numeric(12,9), `longitude` numeric(12,9),
 `altitude` numeric(8,2) nullable, `point_order` int, `is_primary` boolean, `created_at`.
 Un seul point `is_primary = true` par terrain (index unique partiel) : c'est celui affiché sur la
-carte générale. Les autres points décrivent l'emprise (bornes).
+carte générale. Les autres points, dans l'ordre de `point_order`, décrivent l'emprise (bornes).
+
+Neuf décimales (≈ 0,1 mm) depuis la migration `coordinate_precision_9_decimals` : un relevé
+Google Earth Pro ou GPS RTK est restitué à l'identique dans la fiche et dans le KML exporté
+(vérifié sur `AK_TANENE_DUB.kmz` : écart maximal 0,07 mm sur 16 bornes). Les sept décimales
+initiales arrondissaient au centimètre, ce que l'utilisateur lisait comme une coordonnée inexacte.
 
 ### property_managers
 PK composite `(property_id, user_id)`, `assigned_at`, `assigned_by`. Porte le périmètre du rôle

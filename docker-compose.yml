@@ -70,8 +70,9 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Contexte à la racine : le verrou npm des workspaces y vit.
+      context: .
+      dockerfile: backend/Dockerfile
       target: development
     container_name: ak-immo-backend
     restart: unless-stopped
@@ -99,13 +100,13 @@ services:
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:
-      - ./backend/src:/app/src
-      - ./backend/prisma:/app/prisma
+      - ./backend/src:/app/backend/src
+      - ./backend/prisma:/app/backend/prisma
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
       target: development
     container_name: ak-immo-frontend
     restart: unless-stopped
@@ -117,7 +118,7 @@ services:
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     volumes:
-      - ./frontend/src:/app/src
+      - ./frontend/src:/app/frontend/src
 
 volumes:
   postgres-data:

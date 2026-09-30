@@ -1,0 +1,23 @@
+# Ce dossier peut être poussé comme dépôt autonome : il lui faut son propre
+# .gitignore, celui de la racine ne s'applique pas.
+node_modules/
+dist/
+coverage/
+.cache/
+
+# Environnement — contient la base, les secrets JWT et la clé S3 : JAMAIS commité
+.env
+.env.*
+!.env.example
+
+# Logs, caches, tests
+*.log
+*.tsbuildinfo
+test-results/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

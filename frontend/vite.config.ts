@@ -12,6 +12,12 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      // Playwright écrit traces, vidéos et rapports dans le dossier du
+      // frontend pendant les tests : sans cette exclusion, Vite rechargeait la
+      // page à chaque fichier écrit et vidait les formulaires en cours de test.
+      ignored: ['**/e2e/**', '**/test-results/**', '**/playwright-report/**'],
+    },
     proxy: {
       // Le proxy évite tout CORS en développement et fait voyager le cookie de
       // refresh sur la même origine que l'application.

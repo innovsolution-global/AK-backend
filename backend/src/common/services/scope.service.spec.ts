@@ -39,10 +39,8 @@ describe('ScopeService', () => {
       expect(filter).toEqual({ deletedAt: null });
     });
 
-    it("ne restreint pas un gestionnaire qui est aussi administrateur", () => {
-      const filter = scope.propertyFilter(
-        userWith([ROLES.GESTIONNAIRE, ROLES.ADMIN]),
-      );
+    it('ne restreint pas un gestionnaire qui est aussi administrateur', () => {
+      const filter = scope.propertyFilter(userWith([ROLES.GESTIONNAIRE, ROLES.ADMIN]));
 
       expect(filter).toEqual({ deletedAt: null });
     });
@@ -60,7 +58,7 @@ describe('ScopeService', () => {
   });
 
   describe('projectFilter', () => {
-    it("interdit tout projet à un utilisateur partagé", () => {
+    it('interdit tout projet à un utilisateur partagé', () => {
       const filter = scope.projectFilter(userWith([ROLES.UTILISATEUR_PARTAGE]));
 
       // Une liste d'identifiants vide ne peut jamais correspondre : le §22

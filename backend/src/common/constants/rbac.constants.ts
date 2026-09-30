@@ -112,10 +112,7 @@ export const ROLE_PERMISSIONS: Record<RoleCode, readonly PermissionCode[]> = {
   // §22 — l'utilisateur partagé n'accède qu'aux routes /api/shared/*.
   // Ses deux permissions sont systématiquement doublées d'un filtre
   // « ce partage précis, ACTIVE et non expiré » côté service.
-  [ROLES.UTILISATEUR_PARTAGE]: [
-    PERMISSIONS.PROPERTY_READ,
-    PERMISSIONS.DOCUMENT_READ,
-  ],
+  [ROLES.UTILISATEUR_PARTAGE]: [PERMISSIONS.PROPERTY_READ, PERMISSIONS.DOCUMENT_READ],
 };
 
 export const ROLE_DEFINITIONS: Record<RoleCode, { name: string; description: string }> = {

@@ -1,5 +1,30 @@
-import { escapeHtml, renderLayout } from './mail.templates';
+import {
+  credentialsPanel,
+  detailList,
+  escapeHtml,
+  paragraph,
+  quote,
+  renderLayout,
+  strong,
+} from './mail.templates';
 
+/** Date longue en français — « 31 décembre 2026 ». */
+function longDate(date: Date): string {
+  return date.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Invitation à un partage (§20-21).
+ *
+ * L'email est le seul support des accès : identifiant, mot de passe généré
+ * pour cette invitation, échéance. Rien d'autre — il est lu sur un téléphone,
+ * par quelqu'un qui ne connaît pas la plateforme. Le fichier Google Earth,
+ * lui, s'obtient depuis la fiche du bien une fois connecté.
+ */
 export function shareInvitationTemplate(params: {
   appName: string;
   firstName: string;
@@ -8,6 +33,10 @@ export function shareInvitationTemplate(params: {
   propertyReference: string;
   message?: string | null;
   url: string;
+  /** Identifiant de connexion : l'adresse qui reçoit cette invitation. */
+  email: string;
+  /** Mot de passe généré pour cette invitation — toujours présent (§21). */
+  temporaryPassword: string;
   expiresAt: Date;
 }): { subject: string; html: string; text: string } {
   const {
@@ -18,49 +47,54 @@ export function shareInvitationTemplate(params: {
     propertyReference,
     message,
     url,
+    email,
+    temporaryPassword,
     expiresAt,
   } = params;
 
-  const expiry = expiresAt.toLocaleDateString('fr-FR', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
-
-  const personalMessage = message
-    ? `<blockquote style="margin:16px 0;padding:12px 16px;border-left:3px solid #0f766e;
-          background:#f8fafc;color:#334155;font-style:italic;">
-         ${escapeHtml(message)}
-       </blockquote>`
-    : '';
+  const expiry = longDate(expiresAt);
 
   return {
     subject: `${appName} — accès au bien ${propertyReference}`,
     html: renderLayout({
       appName,
       title: 'Un bien vous a été partagé',
-      preheader: `${propertyReference} — accès valable jusqu'au ${expiry}.`,
-      body: `<p style="margin:0 0 12px;">Bonjour ${escapeHtml(firstName)},</p>
-             <p style="margin:0 0 12px;">
-               ${escapeHtml(senderName)} vous donne accès au bien
-               <strong>${escapeHtml(propertyName)}</strong>
-               (référence <strong>${escapeHtml(propertyReference)}</strong>).
-             </p>
-             ${personalMessage}
-             <p style="margin:0 0 12px;">
-               Activez votre accès en définissant votre mot de passe. Cet accès est
-               <strong>limité à ce seul bien</strong> et expire le <strong>${expiry}</strong>.
-             </p>`,
-      action: { label: 'Activer mon accès', url },
-      footerNote:
-        "Ce lien est personnel et à usage unique. Si vous n'attendiez pas ce message, ignorez-le.",
+      preheader: `${propertyReference} — vos accès, jusqu'au ${expiry}.`,
+      body:
+        paragraph(`Bonjour ${escapeHtml(firstName)},`) +
+        paragraph(
+          `${escapeHtml(senderName)} vous donne accès au bien ${strong(propertyName)}.`,
+        ) +
+        (message ? quote(message) : '') +
+        detailList([
+          { label: 'Référence', value: propertyReference },
+          { label: 'Accès jusqu’au', value: expiry },
+        ]) +
+        credentialsPanel({
+          email,
+          password: temporaryPassword,
+          note: 'Ce mot de passe remplace celui des invitations précédentes.',
+        }),
+      action: { label: 'Voir le bien', url },
     }),
-    text: `Bonjour ${firstName},\n\n${senderName} vous donne accès au bien ${propertyName} (${propertyReference}).\n${
-      message ? `\nMessage : ${message}\n` : ''
-    }\nActivez votre accès (valable jusqu'au ${expiry}) :\n${url}\n\nCet accès est limité à ce seul bien.`,
+    text: [
+      `Bonjour ${firstName},`,
+      '',
+      `${senderName} vous donne accès au bien ${propertyName} (${propertyReference}).`,
+      ...(message ? ['', `Message : ${message}`] : []),
+      '',
+      'Vos accès :',
+      `  identifiant : ${email}`,
+      `  mot de passe : ${temporaryPassword}`,
+      '  (il remplace celui des invitations précédentes)',
+      '',
+      `Connexion — accès jusqu'au ${expiry} :`,
+      url,
+    ].join('\n'),
   };
 }
 
+/** Fin d'accès : le partage a été révoqué par son propriétaire (§21). */
 export function shareRevokedTemplate(params: {
   appName: string;
   firstName: string;
@@ -74,18 +108,15 @@ export function shareRevokedTemplate(params: {
       appName,
       title: 'Votre accès a pris fin',
       preheader: `L'accès au bien ${propertyReference} a été retiré.`,
-      body: `<p style="margin:0 0 12px;">Bonjour ${escapeHtml(firstName)},</p>
-             <p style="margin:0 0 12px;">
-               Votre accès au bien <strong>${escapeHtml(propertyReference)}</strong>
-               a pris fin. Vous ne pouvez plus consulter ses informations ni ses documents.
-             </p>`,
-      footerNote:
-        "Pour toute question, rapprochez-vous de la personne qui vous avait donné l'accès.",
+      body:
+        paragraph(`Bonjour ${escapeHtml(firstName)},`) +
+        paragraph(`Votre accès au bien ${strong(propertyReference)} a pris fin.`),
     }),
     text: `Bonjour ${firstName},\n\nVotre accès au bien ${propertyReference} a pris fin.`,
   };
 }
 
+/** Rappel avant échéance, envoyé au bénéficiaire (§27). */
 export function shareExpiringTemplate(params: {
   appName: string;
   firstName: string;
@@ -95,26 +126,22 @@ export function shareExpiringTemplate(params: {
 }): { subject: string; html: string; text: string } {
   const { appName, firstName, propertyReference, expiresAt, daysLeft } = params;
 
-  const expiry = expiresAt.toLocaleDateString('fr-FR', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
+  const expiry = longDate(expiresAt);
+  const remaining = daysLeft <= 1 ? 'demain' : `dans ${daysLeft} jours`;
 
   return {
-    subject: `${appName} — votre accès expire dans ${daysLeft} jour(s)`,
+    subject: `${appName} — votre accès expire ${remaining}`,
     html: renderLayout({
       appName,
       title: 'Votre accès expire bientôt',
-      preheader: `Accès au bien ${propertyReference} valable jusqu'au ${expiry}.`,
-      body: `<p style="margin:0 0 12px;">Bonjour ${escapeHtml(firstName)},</p>
-             <p style="margin:0 0 12px;">
-               Votre accès au bien <strong>${escapeHtml(propertyReference)}</strong>
-               expire le <strong>${expiry}</strong>, soit dans ${daysLeft} jour(s).
-             </p>`,
-      footerNote:
-        "Si vous avez encore besoin de cet accès, contactez la personne qui vous l'a accordé.",
+      preheader: `Bien ${propertyReference} — dernier jour : ${expiry}.`,
+      body:
+        paragraph(`Bonjour ${escapeHtml(firstName)},`) +
+        paragraph(
+          `Votre accès au bien ${strong(propertyReference)} prend fin ${remaining},
+           le ${strong(expiry)}.`,
+        ),
     }),
-    text: `Bonjour ${firstName},\n\nVotre accès au bien ${propertyReference} expire le ${expiry} (dans ${daysLeft} jour(s)).`,
+    text: `Bonjour ${firstName},\n\nVotre accès au bien ${propertyReference} prend fin ${remaining} (dernier jour : ${expiry}).`,
   };
 }

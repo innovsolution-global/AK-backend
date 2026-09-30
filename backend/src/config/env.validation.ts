@@ -19,7 +19,7 @@ const secret = z
   .string()
   .min(32, 'doit contenir au moins 32 caractères')
   .refine((value) => !value.startsWith('remplacer_par_'), {
-    message: 'la valeur d\'exemple du .env.example doit être remplacée',
+    message: "la valeur d'exemple du .env.example doit être remplacée",
   });
 
 export const envSchema = z.object({
@@ -35,6 +35,8 @@ export const envSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_SECRET: secret,
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  /** Signe les liens Google Earth publics ; dérivé du secret refresh si absent. */
+  EARTH_LINK_SECRET: secret.optional(),
 
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   THROTTLE_TTL: z.coerce.number().int().positive().default(60),

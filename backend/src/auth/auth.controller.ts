@@ -4,18 +4,14 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { CookieOptions, Request, Response } from 'express';
 import { AppConfigService } from '../config/app-config.service';
 import { CurrentUser, Public } from '../common/decorators';
@@ -27,6 +23,7 @@ import {
   LoginDto,
   LoginResponseDto,
   ResetPasswordDto,
+  UpdateProfileDto,
   VerifyEmailDto,
 } from './dto/auth.dto';
 
@@ -161,17 +158,24 @@ export class AuthController {
     return user;
   }
 
+  @Patch('me')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Modification de son propre nom' })
+  async updateMe(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateProfileDto,
+    @Req() request: Request,
+  ): Promise<AuthenticatedUser> {
+    return this.auth.updateProfile(user.id, dto, this.contextOf(request));
+  }
+
   // --- Cookies --------------------------------------------------------------
 
   /**
    * Le refresh token voyage en cookie `httpOnly` : inaccessible au JavaScript,
    * il reste hors de portée d'une injection XSS, contrairement au localStorage.
    */
-  private setRefreshCookie(
-    response: Response,
-    token: string,
-    expiresAt: Date,
-  ): void {
+  private setRefreshCookie(response: Response, token: string, expiresAt: Date): void {
     response.cookie(REFRESH_COOKIE_NAME, token, {
       ...this.cookieOptions(),
       expires: expiresAt,

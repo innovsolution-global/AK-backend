@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from './env.validation';
@@ -78,6 +79,22 @@ export class AppConfigService {
       refreshSecret: this.get('JWT_REFRESH_SECRET'),
       refreshExpiresIn: this.get('JWT_REFRESH_EXPIRES_IN'),
     };
+  }
+
+  /**
+   * Clé HMAC des liens Google Earth publics.
+   *
+   * À défaut de secret dédié, on dérive une clé distincte du secret refresh :
+   * un lien KML ne doit jamais pouvoir passer pour un refresh token, ni
+   * l'inverse.
+   */
+  get earthLinkSecret(): string {
+    return (
+      this.get('EARTH_LINK_SECRET') ??
+      createHash('sha256')
+        .update(`ak-immo:earth-link:${this.jwt.refreshSecret}`)
+        .digest('hex')
+    );
   }
 
   // --- Stockage objet ------------------------------------------------------

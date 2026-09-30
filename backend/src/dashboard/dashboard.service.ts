@@ -40,7 +40,10 @@ export class DashboardService {
       geoFileCount,
       activeShares,
       expiringShares,
-    ] = await this.prisma.$transaction([
+      // Lecture seule : `Promise.all` plutôt que `$transaction`, qui
+      // immobiliserait une connexion pour toute la série sans rien garantir de
+      // plus sur un instantané d'indicateurs.
+    ] = await Promise.all([
       this.prisma.property.count({ where: propertyScope }),
       this.prisma.property.aggregate({
         where: propertyScope,
@@ -50,6 +53,7 @@ export class DashboardService {
         by: ['status'],
         where: propertyScope,
         _count: { _all: true },
+        orderBy: { status: 'asc' },
       }),
       this.prisma.location.count({ where: { deletedAt: null } }),
       this.prisma.site.count({ where: { deletedAt: null } }),
@@ -58,6 +62,7 @@ export class DashboardService {
         by: ['status'],
         where: projectScope,
         _count: { _all: true },
+        orderBy: { status: 'asc' },
       }),
       this.prisma.propertyDocument.count({
         where: {
@@ -125,18 +130,20 @@ export class DashboardService {
   async properties(user: AuthenticatedUser) {
     const where = this.scope.propertyFilter(user);
 
-    const [byStatus, byLocation, largest, recent] = await this.prisma.$transaction([
+    const [byStatus, byLocation, largest, recent] = await Promise.all([
       this.prisma.property.groupBy({
         by: ['status'],
         where,
         _count: { _all: true },
         _sum: { areaSqm: true },
+        orderBy: { status: 'asc' },
       }),
       this.prisma.property.groupBy({
         by: ['locationId'],
         where,
         _count: { _all: true },
         _sum: { areaSqm: true },
+        orderBy: { locationId: 'asc' },
       }),
       this.prisma.property.findMany({
         where,
@@ -197,16 +204,18 @@ export class DashboardService {
   async projects(user: AuthenticatedUser) {
     const where = this.scope.projectFilter(user);
 
-    const [byStatus, byCompany, recent, permits] = await this.prisma.$transaction([
+    const [byStatus, byCompany, recent, permits] = await Promise.all([
       this.prisma.project.groupBy({
         by: ['status'],
         where,
         _count: { _all: true },
+        orderBy: { status: 'asc' },
       }),
       this.prisma.project.groupBy({
         by: ['companyId'],
         where: { ...where, companyId: { not: null } },
         _count: { _all: true },
+        orderBy: { companyId: 'asc' },
       }),
       this.prisma.project.findMany({
         where,
@@ -225,6 +234,7 @@ export class DashboardService {
         by: ['status'],
         where: { deletedAt: null, project: where },
         _count: { _all: true },
+        orderBy: { status: 'asc' },
       }),
     ]);
 
@@ -258,53 +268,167 @@ export class DashboardService {
     };
   }
 
+  /**
+   * Chronologie des acquisitions sur les `months` derniers mois.
+   *
+   * Les colonnes remontées sont minimales (date + superficie) : même pour des
+   * milliers de terrains le transfert reste léger, et le regroupement en
+   * mémoire évite de traduire le périmètre Prisma en SQL brut. Au-delà de
+   * quelques dizaines de milliers de lignes, basculer sur un `GROUP BY
+   * date_trunc` côté base.
+   */
+  async acquisitions(user: AuthenticatedUser, months = 24) {
+    const since = new Date();
+    since.setMonth(since.getMonth() - (months - 1), 1);
+    since.setHours(0, 0, 0, 0);
+
+    const rows = await this.prisma.property.findMany({
+      where: {
+        AND: [
+          this.scope.propertyFilter(user),
+          { purchaseDate: { not: null, gte: since } },
+        ],
+      },
+      select: { purchaseDate: true, areaSqm: true },
+    });
+
+    // Tous les mois de la fenêtre sont émis, y compris ceux à zéro : une
+    // courbe qui saute les mois vides ment sur le rythme d'acquisition.
+    const buckets = new Map<string, { count: number; areaSqm: number }>();
+    const cursor = new Date(since);
+
+    for (let i = 0; i < months; i += 1) {
+      buckets.set(monthKey(cursor), { count: 0, areaSqm: 0 });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    for (const row of rows) {
+      if (!row.purchaseDate) continue;
+      const bucket = buckets.get(monthKey(row.purchaseDate));
+      if (bucket) {
+        bucket.count += 1;
+        bucket.areaSqm += Number(row.areaSqm);
+      }
+    }
+
+    let cumulative = 0;
+
+    return [...buckets.entries()].map(([month, bucket]) => {
+      cumulative += bucket.count;
+      return {
+        month,
+        count: bucket.count,
+        areaSqm: Math.round(bucket.areaSqm),
+        cumulative,
+      };
+    });
+  }
+
+  /**
+   * Activité récente et échéances (§27, §28).
+   *
+   * Un administrateur voit tout ; les autres rôles voient leurs propres actions,
+   * pour ne pas transformer le tableau de bord en journal d'audit déguisé —
+   * celui-ci a sa propre permission.
+   */
+  async activity(user: AuthenticatedUser) {
+    const propertyScope = this.scope.propertyFilter(user);
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 30 * 86_400_000);
+
+    const [recentActivity, expiringShares, pendingShares] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: this.scope.isAdmin(user) ? {} : { userId: user.id },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          action: true,
+          entity: true,
+          entityId: true,
+          metadata: true,
+          createdAt: true,
+          user: { select: { id: true, firstName: true, lastName: true } },
+        },
+      }),
+      this.prisma.propertyShare.findMany({
+        where: {
+          status: ShareStatus.ACTIVE,
+          expiresAt: { gt: now, lte: horizon },
+          property: propertyScope,
+        },
+        orderBy: { expiresAt: 'asc' },
+        take: 8,
+        select: {
+          id: true,
+          beneficiaryFirstName: true,
+          beneficiaryLastName: true,
+          beneficiaryEmail: true,
+          expiresAt: true,
+          lastAccessedAt: true,
+          property: { select: { id: true, reference: true, name: true } },
+        },
+      }),
+      this.prisma.propertyShare.count({
+        where: {
+          status: ShareStatus.PENDING,
+          expiresAt: { gt: now },
+          property: propertyScope,
+        },
+      }),
+    ]);
+
+    return { recentActivity, expiringShares, pendingShares };
+  }
+
   /** Volumétrie documentaire (§28). */
   async documents(user: AuthenticatedUser) {
     const propertyScope = this.scope.propertyFilter(user);
     const projectScope = this.scope.projectFilter(user);
 
-    const [byType, sizeAggregate, projectByType, recent] =
-      await this.prisma.$transaction([
-        this.prisma.propertyDocument.groupBy({
-          by: ['type'],
-          where: {
-            deletedAt: null,
-            isCurrentVersion: true,
-            property: propertyScope,
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.propertyDocument.aggregate({
-          where: { deletedAt: null, property: propertyScope },
-          _sum: { size: true },
-          _count: { _all: true },
-        }),
-        this.prisma.projectDocument.groupBy({
-          by: ['type'],
-          where: {
-            deletedAt: null,
-            isCurrentVersion: true,
-            project: projectScope,
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.propertyDocument.findMany({
-          where: {
-            deletedAt: null,
-            isCurrentVersion: true,
-            property: propertyScope,
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            createdAt: true,
-            property: { select: { id: true, reference: true } },
-          },
-        }),
-      ]);
+    const [byType, sizeAggregate, projectByType, recent] = await Promise.all([
+      this.prisma.propertyDocument.groupBy({
+        by: ['type'],
+        where: {
+          deletedAt: null,
+          isCurrentVersion: true,
+          property: propertyScope,
+        },
+        _count: { _all: true },
+        orderBy: { type: 'asc' },
+      }),
+      this.prisma.propertyDocument.aggregate({
+        where: { deletedAt: null, property: propertyScope },
+        _sum: { size: true },
+        _count: { _all: true },
+      }),
+      this.prisma.projectDocument.groupBy({
+        by: ['type'],
+        where: {
+          deletedAt: null,
+          isCurrentVersion: true,
+          project: projectScope,
+        },
+        _count: { _all: true },
+        orderBy: { type: 'asc' },
+      }),
+      this.prisma.propertyDocument.findMany({
+        where: {
+          deletedAt: null,
+          isCurrentVersion: true,
+          property: propertyScope,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          createdAt: true,
+          property: { select: { id: true, reference: true } },
+        },
+      }),
+    ]);
 
     return {
       propertyDocuments: {
@@ -349,6 +473,11 @@ export class DashboardService {
       };
     });
   }
+}
+
+/** Clé `AAAA-MM`, indépendante du fuseau horaire du serveur. */
+function monthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
 export type { Prisma };

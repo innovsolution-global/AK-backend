@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Alert, EmptyState, Skeleton } from '@/components/ui/feedback';
 import { useToast } from '@/components/ui/Toast';
 import { formatDate, formatDateTime } from '@/utils/format';
+import { copyText } from '@/utils/download';
 import { ShareFormModal } from './ShareFormModal';
 
 interface SharesPanelProps {
@@ -21,6 +22,17 @@ export function SharesPanel({ propertyId, propertyReference }: SharesPanelProps)
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
   const [toRevoke, setToRevoke] = useState<{ id: string; email: string } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyEarthLink = async (shareId: string, url: string) => {
+    if (await copyText(url)) {
+      setCopiedId(shareId);
+      toast.success('Lien Google Earth copié — à transmettre au bénéficiaire.');
+      window.setTimeout(() => setCopiedId(null), 2_000);
+    } else {
+      toast.error('Copie impossible dans ce navigateur.');
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.properties.shares(propertyId),
@@ -141,6 +153,22 @@ export function SharesPanel({ propertyId, propertyReference }: SharesPanelProps)
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1">
+                      {share.earthLinkUrl && (
+                        <Button
+                          variant={copiedId === share.id ? 'success' : 'secondary'}
+                          size="sm"
+                          icon={
+                            <Icon
+                              name={copiedId === share.id ? 'check' : 'globe'}
+                              className="h-4 w-4"
+                            />
+                          }
+                          onClick={() => void copyEarthLink(share.id, share.earthLinkUrl!)}
+                          title="Copier le lien .kml à ouvrir dans Google Earth"
+                        >
+                          {copiedId === share.id ? 'Copié' : 'Lien Google Earth'}
+                        </Button>
+                      )}
                       {share.status === 'PENDING' && (
                         <Button
                           variant="ghost"

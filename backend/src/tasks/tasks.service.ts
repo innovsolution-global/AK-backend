@@ -159,9 +159,7 @@ export class TasksService {
         });
       }
     } catch (error) {
-      this.logger.error(
-        `Contrôle des permis impossible : ${(error as Error).message}`,
-      );
+      this.logger.error(`Contrôle des permis impossible : ${(error as Error).message}`);
     }
   }
 

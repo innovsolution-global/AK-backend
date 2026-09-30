@@ -13,6 +13,17 @@ import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+/**
+ * Champ facultatif : une chaîne vide devient `null`. En modification, vider
+ * un champ l'efface réellement ; et un email ou un site vide n'échoue plus sur
+ * la validation de format (`@IsOptional` ignore `null`).
+ */
+const trimOrNull = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+};
+
 export class CreateCompanyDto {
   @ApiProperty({ example: 'Entreprise Générale de Construction' })
   @Transform(trim)
@@ -23,64 +34,66 @@ export class CreateCompanyDto {
 
   @ApiPropertyOptional({ description: "Numéro d'enregistrement (RCCM)" })
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(100)
-  registrationNumber?: string;
+  registrationNumber?: string | null;
 
   @ApiPropertyOptional({ description: 'Numéro fiscal (NIF)' })
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(100)
-  taxNumber?: string;
+  taxNumber?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(500)
-  address?: string;
+  address?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(50)
-  phone?: string;
+  phone?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().toLowerCase() : value,
-  )
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const normalized = value.trim().toLowerCase();
+    return normalized === '' ? null : normalized;
+  })
   @IsEmail({}, { message: "L'adresse email est invalide." })
   @MaxLength(255)
-  email?: string;
+  email?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsUrl(
     { require_protocol: true },
     { message: 'Le site web doit être une URL complète (https://…).' },
   )
   @MaxLength(500)
-  website?: string;
+  website?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(200)
-  contactPerson?: string;
+  contactPerson?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(trim)
+  @Transform(trimOrNull)
   @IsString()
   @MaxLength(5000)
-  notes?: string;
+  notes?: string | null;
 }
 
 export class UpdateCompanyDto extends CreateCompanyDto {

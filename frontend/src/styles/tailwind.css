@@ -136,6 +136,16 @@ tbody tr {
   /* Assombrit les tuiles OpenStreetMap sans en changer la lisibilité. */
   filter: brightness(0.7) contrast(1.05) saturate(0.8);
 }
+/* L'imagerie satellite garde ses couleurs : c'est elle qu'on lit. */
+.dark .basemap-satellite .leaflet-tile {
+  filter: none;
+}
+.leaflet-container .parcel-label {
+  @apply rounded-full border-0 bg-night-900/80 px-2.5 py-1 text-[11px] font-semibold text-white shadow-none;
+}
+.leaflet-container .parcel-label::before {
+  display: none;
+}
 .leaflet-popup-content-wrapper {
   @apply rounded-2xl shadow-card-hover dark:bg-night-700 dark:text-white;
 }

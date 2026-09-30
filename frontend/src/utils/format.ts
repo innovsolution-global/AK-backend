@@ -96,9 +96,19 @@ export function humanizeEnum(value: string): string {
     .join(' ');
 }
 
+/**
+ * Coordonnée telle que stockée (jusqu'à 9 décimales, zéros de fin retirés,
+ * 6 décimales minimum pour l'alignement). On n'arrondit pas à l'affichage :
+ * un relevé de géomètre doit se relire à l'identique dans la fiche.
+ */
 export function formatCoordinate(value: number | string): string {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed.toFixed(6) : '—';
+  if (!Number.isFinite(parsed)) return '—';
+
+  const fixed = parsed.toFixed(9);
+  const [integer, decimals = ''] = fixed.split('.');
+  const trimmed = decimals.replace(/0+$/, '');
+  return `${integer}.${trimmed.padEnd(6, '0')}`;
 }
 
 function round(value: number, decimals: number): number {

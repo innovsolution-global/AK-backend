@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AuditAction, Prisma } from '@prisma/client';
+import { AuditAction, NotificationType, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import {
@@ -52,6 +53,7 @@ export class PropertyDocumentsService {
     private readonly validation: FileValidationService,
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAll(
@@ -191,11 +193,46 @@ export class PropertyDocumentsService {
         return created;
       });
 
+      await this.notifyManagers(propertyId, user.id, dto.name, document.id);
+
       return document;
     } catch (error) {
       await this.storage.deleteQuietly(storageKey);
       throw error;
     }
+  }
+
+  /**
+   * Prévient les gestionnaires du bien qu'un document a été ajouté (§27),
+   * sauf celui qui vient de le déposer.
+   */
+  private async notifyManagers(
+    propertyId: string,
+    uploaderId: string,
+    documentName: string,
+    documentId: string,
+  ): Promise<void> {
+    const property = await this.prisma.property.findFirst({
+      where: { id: propertyId },
+      select: {
+        reference: true,
+        managers: { select: { userId: true } },
+      },
+    });
+
+    if (!property) return;
+
+    const recipients = property.managers
+      .map((manager) => manager.userId)
+      .filter((id) => id !== uploaderId);
+
+    await this.notifications.createMany(recipients, {
+      type: NotificationType.DOCUMENT_ADDED,
+      title: `Nouveau document sur ${property.reference}`,
+      message: `« ${documentName} » vient d'être ajouté au bien ${property.reference}.`,
+      entityType: 'PropertyDocument',
+      entityId: documentId,
+    });
   }
 
   /**

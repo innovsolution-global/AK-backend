@@ -19,11 +19,19 @@ export class MapsController {
     description:
       "Projection allégée, limitée au périmètre de l'utilisateur. Seuls les terrains dotés d'un point principal apparaissent.",
   })
-  findMarkers(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: QueryMapDto,
-  ) {
+  findMarkers(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryMapDto) {
     return this.maps.findMarkers(user, query);
+  }
+
+  @Get('parcels')
+  @RequirePermissions(PERMISSIONS.MAP_READ)
+  @ApiOperation({
+    summary: 'Emprises des terrains (GeoJSON)',
+    description:
+      'Un polygone par terrain doté d’au moins trois bornes, dans le périmètre de l’utilisateur. Complète la couche des markers.',
+  })
+  findParcels(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryMapDto) {
+    return this.maps.findParcels(user, query);
   }
 
   @Get('bounds')

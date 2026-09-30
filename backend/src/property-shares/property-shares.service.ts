@@ -5,22 +5,24 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AuditAction, Prisma, ShareStatus } from '@prisma/client';
+import { AuditAction, NotificationType, Prisma, ShareStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PasswordService } from '../auth/services/password.service';
 import { MailService } from '../mail/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginatedResult } from '../common/dto/paginated-result';
 import { ScopeService } from '../common/services/scope.service';
 import { ROLES } from '../common/constants/rbac.constants';
-import { generateSecureToken, hashToken } from '../common/utils/crypto.util';
+import {
+  generateSecureToken,
+  generateTemporaryPassword,
+  hashToken,
+} from '../common/utils/crypto.util';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { RequestContext } from '../auth/auth.service';
-import type {
-  ActivateShareDto,
-  CreateShareDto,
-  QuerySharesDto,
-} from './dto/property-share.dto';
+import type { CreateShareDto, QuerySharesDto } from './dto/property-share.dto';
+import { EarthLinkService } from './earth-link.service';
 
 /**
  * Projection administrateur.
@@ -61,7 +63,33 @@ export class PropertySharesService {
     private readonly mail: MailService,
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
+    private readonly earthLinks: EarthLinkService,
   ) {}
+
+  /**
+   * Ajoute le lien Google Earth aux partages qui peuvent en avoir un : c'est
+   * ce lien que le gestionnaire copie pour l'envoyer au bénéficiaire par le
+   * canal de son choix.
+   */
+  private withEarthLink<
+    T extends {
+      id: string;
+      status: ShareStatus;
+      allowGoogleEarth: boolean;
+      expiresAt: Date;
+    },
+  >(share: T): T & { earthLinkUrl: string | null } {
+    const linkable =
+      share.allowGoogleEarth &&
+      share.expiresAt > new Date() &&
+      (share.status === ShareStatus.PENDING || share.status === ShareStatus.ACTIVE);
+
+    return {
+      ...share,
+      earthLinkUrl: linkable ? this.earthLinks.buildUrl(share.id) : null,
+    };
+  }
 
   // -------------------------------------------------------------------------
   // Consultation (administrateur)
@@ -72,6 +100,15 @@ export class PropertySharesService {
 
     if (query.status) filters.status = query.status;
     if (query.propertyId) filters.propertyId = query.propertyId;
+
+    if (query.expiringInDays) {
+      // Fenêtre ouverte sur maintenant : un accès déjà expiré n'a plus rien à
+      // renouveler, et son statut le dit déjà.
+      const now = new Date();
+      const limit = new Date(now.getTime() + query.expiringInDays * 86_400_000);
+
+      filters.expiresAt = { gt: now, lte: limit };
+    }
 
     if (query.search) {
       filters.OR = [
@@ -96,17 +133,23 @@ export class PropertySharesService {
       this.prisma.propertyShare.count({ where }),
     ]);
 
-    return PaginatedResult.from(items, total, query);
+    return PaginatedResult.from(
+      items.map((share) => this.withEarthLink(share)),
+      total,
+      query,
+    );
   }
 
   async findForProperty(user: AuthenticatedUser, propertyId: string) {
     await this.assertPropertyInScope(user, propertyId);
 
-    return this.prisma.propertyShare.findMany({
+    const shares = await this.prisma.propertyShare.findMany({
       where: { propertyId },
       orderBy: { createdAt: 'desc' },
       select: SHARE_SELECT,
     });
+
+    return shares.map((share) => this.withEarthLink(share));
   }
 
   // -------------------------------------------------------------------------
@@ -143,12 +186,42 @@ export class PropertySharesService {
       });
     }
 
-    await this.assertNoActiveShare(propertyId, dto.email);
     await this.assertDocumentsBelongToProperty(propertyId, dto.documentIds);
 
+    // Le compte du bénéficiaire est créé tout de suite, avec le mot de passe
+    // que l'email transporte : des accès utilisables, sans étape d'activation.
+    const account = await this.provisionBeneficiary({
+      email: dto.email,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      phone: dto.phone,
+    });
+
+    // Le jeton n'est plus transmis : la colonne reste unique et non nulle, et
+    // conserver une valeur aléatoire évite toute collision entre partages.
     const token = generateSecureToken(32);
 
     const share = await this.prisma.$transaction(async (tx) => {
+      // Un nouveau partage du même bien à la même personne remplace les
+      // précédents : sa portée (documents, coordonnées, Google Earth) est celle
+      // que l'administrateur vient de choisir. Laisser les anciens actifs
+      // cumulerait les autorisations — un document retiré resterait visible.
+      const superseded = await tx.propertyShare.updateMany({
+        where: {
+          propertyId,
+          status: { in: [ShareStatus.ACTIVE, ShareStatus.PENDING] },
+          OR: [
+            { beneficiaryEmail: { equals: dto.email, mode: 'insensitive' } },
+            { userId: account.userId },
+          ],
+        },
+        data: {
+          status: ShareStatus.REVOKED,
+          revokedAt: new Date(),
+          revokedById: actor.id,
+        },
+      });
+
       const created = await tx.propertyShare.create({
         data: {
           propertyId,
@@ -158,7 +231,9 @@ export class PropertySharesService {
           beneficiaryPhone: dto.phone,
           message: dto.message,
           tokenHash: hashToken(token),
-          status: ShareStatus.PENDING,
+          userId: account.userId,
+          status: ShareStatus.ACTIVE,
+          activatedAt: new Date(),
           expiresAt,
           allowDocuments: dto.allowDocuments ?? true,
           allowCoordinates: dto.allowCoordinates ?? true,
@@ -184,20 +259,25 @@ export class PropertySharesService {
           beneficiaryEmail: dto.email,
           expiresAt: expiresAt.toISOString(),
           documentCount: dto.documentIds?.length ?? 0,
+          accountCreated: account.created,
+          supersededShares: superseded.count,
         },
       });
 
       return created;
     });
 
+    const shareWithLink = this.withEarthLink(share);
+
     const sent = await this.mail.sendShareInvitation({
       to: dto.email,
       firstName: dto.firstName,
       senderName: `${actor.firstName} ${actor.lastName}`,
+      propertyId,
       propertyName: property.name,
       propertyReference: property.reference,
       message: dto.message,
-      token,
+      temporaryPassword: account.temporaryPassword,
       expiresAt,
     });
 
@@ -207,13 +287,127 @@ export class PropertySharesService {
       );
     }
 
-    return { ...share, invitationSent: sent };
+    // §27 — les gestionnaires du bien sont informés qu'un tiers y a désormais
+    // accès, même s'ils ne sont pas à l'origine du partage.
+    const managers = await this.prisma.propertyManager.findMany({
+      where: { propertyId, userId: { not: actor.id } },
+      select: { userId: true },
+    });
+
+    await this.notifications.createMany(
+      managers.map((manager) => manager.userId),
+      {
+        type: NotificationType.SHARE_CREATED,
+        title: `Nouveau partage sur ${property.reference}`,
+        message: `${actor.firstName} ${actor.lastName} a partagé ${property.reference} avec ${dto.email} jusqu'au ${expiresAt.toLocaleDateString('fr-FR')}.`,
+        entityType: 'PropertyShare',
+        entityId: share.id,
+      },
+    );
+
+    return { ...shareWithLink, invitationSent: sent };
   }
 
   /**
-   * Réémet une invitation restée `PENDING`.
-   * Un nouveau token est généré : l'ancien lien cesse immédiatement d'être
-   * valide, ce qui évite que deux liens coexistent.
+   * Crée — ou retrouve — le compte du bénéficiaire (§21).
+   *
+   * Un partage doit produire des accès immédiatement utilisables : le compte
+   * est provisionné avec un mot de passe généré, que l'email transporte, et
+   * qui sert directement à se connecter — aucune étape de redéfinition n'est
+   * imposée. Le bénéficiaire peut le changer quand il le souhaite depuis son
+   * compte.
+   *
+   * Chaque invitation régénère ce mot de passe, y compris pour un bénéficiaire
+   * qui possède déjà un compte — un deuxième bien lui est partagé. **L'email
+   * reçu en dernier porte donc toujours les accès valables** : le précédent
+   * cesse de fonctionner et les sessions ouvertes avec lui tombent
+   * (`tokenVersion`). Une invitation est ainsi toujours utilisable telle
+   * quelle, sans que le destinataire ait à retrouver un message plus ancien.
+   */
+  private async provisionBeneficiary(beneficiary: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone?: string | null;
+  }): Promise<{ userId: string; temporaryPassword: string; created: boolean }> {
+    const existing = await this.prisma.user.findFirst({
+      where: { email: beneficiary.email, deletedAt: null },
+      select: {
+        id: true,
+        isActive: true,
+        roles: { select: { role: { select: { code: true } } } },
+      },
+    });
+
+    if (existing) {
+      // `every` répond vrai sur un tableau vide : un compte sans aucun rôle
+      // aurait été pris pour un compte de partage, et son mot de passe
+      // réécrit par la simple invitation de son adresse. On exige donc que le
+      // rôle de partage soit présent, et seul.
+      const isSharedAccount =
+        existing.roles.length > 0 &&
+        existing.roles.every(({ role }) => role.code === ROLES.UTILISATEUR_PARTAGE);
+
+      // Un compte interne ne doit jamais devenir un compte de partage : cela
+      // écraserait ses rôles et son mot de passe.
+      if (!isSharedAccount) {
+        throw new ConflictException({
+          message:
+            'Cette adresse correspond déjà à un compte de la plateforme. Le bien lui sera accessible avec ses identifiants habituels.',
+          error: 'CONFLICT',
+          details: [{ field: 'email', message: 'Compte interne existant' }],
+        });
+      }
+
+      // Mot de passe neuf, et compte réactivé s'il avait été désactivé à la
+      // révocation de son dernier partage.
+      const temporaryPassword = generateTemporaryPassword(14);
+
+      await this.prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash: await this.passwords.hash(temporaryPassword),
+          isActive: true,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          tokenVersion: { increment: 1 },
+        },
+      });
+
+      return { userId: existing.id, temporaryPassword, created: false };
+    }
+
+    const sharedRole = await this.prisma.role.findUniqueOrThrow({
+      where: { code: ROLES.UTILISATEUR_PARTAGE },
+      select: { id: true },
+    });
+
+    const temporaryPassword = generateTemporaryPassword(14);
+
+    const created = await this.prisma.user.create({
+      data: {
+        email: beneficiary.email,
+        firstName: beneficiary.firstName,
+        lastName: beneficiary.lastName,
+        phone: beneficiary.phone,
+        passwordHash: await this.passwords.hash(temporaryPassword),
+        isActive: true,
+        emailVerifiedAt: new Date(),
+        roles: { create: { roleId: sharedRole.id } },
+      },
+      select: { id: true },
+    });
+
+    return { userId: created.id, temporaryPassword, created: true };
+  }
+
+  /**
+   * Renvoie ses accès au bénéficiaire (§21).
+   *
+   * Email égaré ou mot de passe perdu : un **nouveau** mot de passe est généré
+   * et l'ancien cesse aussitôt de fonctionner — avec les sessions ouvertes
+   * avec lui. C'est la seule façon de reprendre la main sur des accès dont on
+   * craint qu'ils aient fuité, la révocation mise à part.
    */
   async resend(
     propertyId: string,
@@ -229,8 +423,12 @@ export class PropertySharesService {
         id: true,
         status: true,
         expiresAt: true,
+        allowGoogleEarth: true,
         beneficiaryEmail: true,
         beneficiaryFirstName: true,
+        beneficiaryLastName: true,
+        beneficiaryPhone: true,
+        userId: true,
         message: true,
         property: { select: { name: true, reference: true } },
       },
@@ -238,35 +436,69 @@ export class PropertySharesService {
 
     if (!share) throw this.shareNotFound();
 
-    if (share.status !== ShareStatus.PENDING) {
+    if (share.status !== ShareStatus.ACTIVE && share.status !== ShareStatus.PENDING) {
       throw new ConflictException({
-        message: `Seule une invitation en attente peut être renvoyée (statut actuel : ${share.status}).`,
+        message: `Les accès d'un partage ${share.status.toLowerCase()} ne peuvent pas être renvoyés.`,
         error: 'CONFLICT',
       });
     }
 
     if (share.expiresAt <= new Date()) {
       throw new ConflictException({
-        message: "Cette invitation a expiré : créez-en une nouvelle.",
+        message: 'Ce partage a expiré : créez-en un nouveau.',
         error: 'CONFLICT',
       });
     }
 
-    const token = generateSecureToken(32);
+    let temporaryPassword: string;
 
-    await this.prisma.propertyShare.update({
-      where: { id: shareId },
-      data: { tokenHash: hashToken(token) },
-    });
+    if (share.userId) {
+      // Nouveau mot de passe : l'ancien cesse de fonctionner, et
+      // `tokenVersion` coupe les sessions ouvertes avec lui.
+      temporaryPassword = generateTemporaryPassword(14);
+
+      await this.prisma.user.update({
+        where: { id: share.userId },
+        data: {
+          passwordHash: await this.passwords.hash(temporaryPassword),
+          isActive: true,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          tokenVersion: { increment: 1 },
+        },
+      });
+    } else {
+      // Partage antérieur au provisionnement automatique : il attendait une
+      // activation qui n'existe plus, donc personne ne pouvait l'ouvrir. Le
+      // renvoi lui donne le compte qui lui manquait.
+      const account = await this.provisionBeneficiary({
+        email: share.beneficiaryEmail,
+        firstName: share.beneficiaryFirstName,
+        lastName: share.beneficiaryLastName,
+        phone: share.beneficiaryPhone,
+      });
+
+      temporaryPassword = account.temporaryPassword;
+
+      await this.prisma.propertyShare.update({
+        where: { id: share.id },
+        data: {
+          userId: account.userId,
+          status: ShareStatus.ACTIVE,
+          activatedAt: new Date(),
+        },
+      });
+    }
 
     const sent = await this.mail.sendShareInvitation({
       to: share.beneficiaryEmail,
       firstName: share.beneficiaryFirstName,
       senderName: `${actor.firstName} ${actor.lastName}`,
+      propertyId,
       propertyName: share.property.name,
       propertyReference: share.property.reference,
       message: share.message,
-      token,
+      temporaryPassword,
       expiresAt: share.expiresAt,
     });
 
@@ -387,173 +619,6 @@ export class PropertySharesService {
   }
 
   // -------------------------------------------------------------------------
-  // Parcours public du bénéficiaire
-  // -------------------------------------------------------------------------
-
-  /**
-   * Vérifie une invitation sans l'activer.
-   *
-   * La réponse reste volontairement pauvre : elle confirme la validité du lien
-   * et rappelle la référence du bien, sans exposer d'information patrimoniale
-   * à qui présenterait un token au hasard.
-   */
-  async validateToken(token: string) {
-    const share = await this.prisma.propertyShare.findUnique({
-      where: { tokenHash: hashToken(token) },
-      select: {
-        status: true,
-        expiresAt: true,
-        beneficiaryFirstName: true,
-        property: { select: { reference: true, deletedAt: true } },
-      },
-    });
-
-    const usable =
-      share !== null &&
-      share.status === ShareStatus.PENDING &&
-      share.expiresAt > new Date() &&
-      share.property.deletedAt === null;
-
-    if (!usable) return { valid: false };
-
-    return {
-      valid: true,
-      propertyReference: share.property.reference,
-      beneficiaryFirstName: share.beneficiaryFirstName,
-      expiresAt: share.expiresAt,
-      requiresPassword: true,
-    };
-  }
-
-  /**
-   * Active un partage : le bénéficiaire définit **lui-même** son mot de passe
-   * (§21), qui ne transite donc jamais par un tiers.
-   *
-   * Si l'adresse correspond déjà à un compte partagé existant, celui-ci est
-   * réutilisé plutôt que dupliqué.
-   */
-  async activate(dto: ActivateShareDto, context: RequestContext) {
-    const share = await this.prisma.propertyShare.findUnique({
-      where: { tokenHash: hashToken(dto.token) },
-      select: {
-        id: true,
-        status: true,
-        expiresAt: true,
-        beneficiaryEmail: true,
-        beneficiaryFirstName: true,
-        beneficiaryLastName: true,
-        beneficiaryPhone: true,
-        property: { select: { id: true, reference: true, deletedAt: true } },
-      },
-    });
-
-    if (
-      !share ||
-      share.status !== ShareStatus.PENDING ||
-      share.expiresAt <= new Date() ||
-      share.property.deletedAt !== null
-    ) {
-      throw new BadRequestException({
-        message: "Ce lien d'activation est invalide ou a expiré.",
-        error: 'VALIDATION_ERROR',
-      });
-    }
-
-    const sharedRole = await this.prisma.role.findUniqueOrThrow({
-      where: { code: ROLES.UTILISATEUR_PARTAGE },
-      select: { id: true },
-    });
-
-    const passwordHash = await this.passwords.hash(dto.password);
-
-    const userId = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.user.findFirst({
-        where: { email: share.beneficiaryEmail, deletedAt: null },
-        select: {
-          id: true,
-          roles: { select: { role: { select: { code: true } } } },
-        },
-      });
-
-      if (existing) {
-        const isSharedAccount = existing.roles.every(
-          ({ role }) => role.code === ROLES.UTILISATEUR_PARTAGE,
-        );
-
-        // Un compte interne ne doit jamais être transformé en compte partagé :
-        // cela écraserait son mot de passe et ses rôles.
-        if (!isSharedAccount) {
-          throw new ConflictException({
-            message:
-              'Cette adresse correspond déjà à un compte de la plateforme. Connectez-vous avec vos identifiants habituels.',
-            error: 'CONFLICT',
-          });
-        }
-
-        await tx.user.update({
-          where: { id: existing.id },
-          data: {
-            passwordHash,
-            isActive: true,
-            mustChangePassword: false,
-            emailVerifiedAt: new Date(),
-            failedLoginAttempts: 0,
-            lockedUntil: null,
-          },
-        });
-
-        return existing.id;
-      }
-
-      const created = await tx.user.create({
-        data: {
-          email: share.beneficiaryEmail,
-          firstName: share.beneficiaryFirstName,
-          lastName: share.beneficiaryLastName,
-          phone: share.beneficiaryPhone,
-          passwordHash,
-          isActive: true,
-          emailVerifiedAt: new Date(),
-          roles: { create: { roleId: sharedRole.id } },
-        },
-        select: { id: true },
-      });
-
-      return created.id;
-    });
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.propertyShare.update({
-        where: { id: share.id },
-        data: {
-          userId,
-          status: ShareStatus.ACTIVE,
-          activatedAt: new Date(),
-        },
-      });
-
-      await this.audit.recordInTransaction(tx, {
-        userId,
-        action: AuditAction.LOGIN,
-        entity: 'PropertyShare',
-        entityId: share.id,
-        ip: context.ip,
-        userAgent: context.userAgent,
-        metadata: {
-          action: 'SHARE_ACTIVATED',
-          propertyReference: share.property.reference,
-        },
-      });
-    });
-
-    return {
-      activated: true,
-      email: share.beneficiaryEmail,
-      propertyReference: share.property.reference,
-    };
-  }
-
-  // -------------------------------------------------------------------------
   // Tâche planifiée
   // -------------------------------------------------------------------------
 
@@ -575,7 +640,9 @@ export class PropertySharesService {
     if (outdated.length === 0) return 0;
 
     const userIds = [
-      ...new Set(outdated.map((share) => share.userId).filter((id): id is string => !!id)),
+      ...new Set(
+        outdated.map((share) => share.userId).filter((id): id is string => !!id),
+      ),
     ];
 
     await this.prisma.$transaction(async (tx) => {
@@ -640,28 +707,6 @@ export class PropertySharesService {
    * Un même bénéficiaire ne peut pas cumuler deux invitations ouvertes sur le
    * même bien : cela produirait deux liens valides et des droits contradictoires.
    */
-  private async assertNoActiveShare(
-    propertyId: string,
-    email: string,
-  ): Promise<void> {
-    const existing = await this.prisma.propertyShare.findFirst({
-      where: {
-        propertyId,
-        beneficiaryEmail: email,
-        status: { in: [ShareStatus.PENDING, ShareStatus.ACTIVE] },
-      },
-      select: { id: true, status: true },
-    });
-
-    if (existing) {
-      throw new ConflictException({
-        message: `Un partage ${existing.status === ShareStatus.PENDING ? 'en attente' : 'actif'} existe déjà pour cette adresse sur ce bien.`,
-        error: 'CONFLICT',
-        details: [{ field: 'email', message: 'Partage déjà existant' }],
-      });
-    }
-  }
-
   /** La liste blanche ne peut contenir que des documents de ce bien (§22). */
   private async assertDocumentsBelongToProperty(
     propertyId: string,
@@ -681,8 +726,7 @@ export class PropertySharesService {
       const missing = unique.filter((id) => !known.has(id));
 
       throw new BadRequestException({
-        message:
-          "Un ou plusieurs documents sélectionnés n'appartiennent pas à ce bien.",
+        message: "Un ou plusieurs documents sélectionnés n'appartiennent pas à ce bien.",
         error: 'VALIDATION_ERROR',
         details: missing.map((id) => ({
           field: 'documentIds',

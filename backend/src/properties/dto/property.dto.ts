@@ -26,8 +26,7 @@ import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
-const toBoolean = ({ value }: { value: unknown }) =>
-  value === 'true' || value === true;
+const toBoolean = ({ value }: { value: unknown }) => value === 'true' || value === true;
 
 // --- Coordonnées ------------------------------------------------------------
 
@@ -78,7 +77,7 @@ export class ReplaceCoordinatesDto {
   @ApiProperty({ type: [CoordinateDto] })
   @IsArray()
   @ArrayMaxSize(500, {
-    message: "Une emprise ne peut pas dépasser 500 points ; utilisez un fichier KML.",
+    message: 'Une emprise ne peut pas dépasser 500 points ; utilisez un fichier KML.',
   })
   @ValidateNested({ each: true })
   @Type(() => CoordinateDto)
@@ -104,7 +103,18 @@ export class CreatePropertyDto {
   @IsUUID('4', { message: 'Le site doit être un UUID valide.' })
   siteId?: string;
 
-  @ApiProperty({ example: 12500.5, description: 'Superficie, dans l\'unité indiquée' })
+  @ApiPropertyOptional({
+    description:
+      'Quartier saisi à la main : retrouvé dans la ville choisie, ou créé. Ignoré si siteId est fourni.',
+    example: 'Nongo',
+  })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(150)
+  siteName?: string;
+
+  @ApiProperty({ example: 12500.5, description: "Superficie, dans l'unité indiquée" })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'La superficie doit être un nombre.' })
   @IsPositive({ message: 'La superficie doit être strictement positive.' })
@@ -210,6 +220,13 @@ export class UpdatePropertyDto {
   @IsOptional()
   @IsUUID('4')
   siteId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Quartier saisi à la main (voir la création).' })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(150)
+  siteName?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

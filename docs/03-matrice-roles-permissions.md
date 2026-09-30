@@ -104,13 +104,18 @@ Le bénéficiaire accède à `/shared/properties/:id` et **ne voit que** :
 | référence, nom, localisation (ville / site) | les autres terrains |
 | superficie et unité | le patrimoine global, le dashboard |
 | coordonnées *(si `allow_coordinates`)* | les projets |
-| carte centrée sur le bien *(si `allow_coordinates`)* | notes internes, sessionnaire / vendeur |
-| Google Maps / Google Earth *(si `allow_google_earth`)* | gestionnaire, créateur, historique |
+| emprise sur fond satellite *(si `allow_coordinates`)* | notes internes, sessionnaire / vendeur |
+| fichier KML généré, lien Google Earth permanent, fichiers importés *(si `allow_google_earth`)* | gestionnaire, créateur, historique |
 | documents de la liste blanche *(si `allow_documents`)* | les autres documents du bien |
 | | les utilisateurs, l'audit, les entreprises |
 
 Le DTO de sortie du partage est **construit en liste blanche** (`SharedPropertyView`), pas par
 suppression de champs sur l'entité : un champ ajouté plus tard au modèle n'apparaît pas par accident.
+
+Le **lien Google Earth** (`/api/public/earth/:token.kml`) est la seule ressource du bien accessible
+sans session : il ne contient que ce que le KML porte déjà (référence, nom, ville, superficie,
+statut, description, emprise) et n'est servi que tant que le partage est `PENDING` ou `ACTIVE`,
+non expiré et autorisant Google Earth. Il ne donne accès à rien d'autre.
 
 ## 3.6 Attribution à la création d'un compte
 

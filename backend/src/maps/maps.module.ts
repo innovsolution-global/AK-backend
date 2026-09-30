@@ -5,9 +5,11 @@ import { AppConfigService } from '../config/app-config.service';
 import { PropertiesModule } from '../properties/properties.module';
 import { GoogleEarthController } from './google-earth.controller';
 import { GoogleEarthService } from './google-earth.service';
+import { KmlBuilderService } from './kml-builder.service';
 import { KmlParserService } from './kml-parser.service';
 import { MapsController } from './maps.controller';
 import { MapsService } from './maps.service';
+import { PropertyKmlService } from './property-kml.service';
 
 @Module({
   imports: [
@@ -21,7 +23,13 @@ import { MapsService } from './maps.service';
     }),
   ],
   controllers: [MapsController, GoogleEarthController],
-  providers: [MapsService, GoogleEarthService, KmlParserService],
-  exports: [MapsService, KmlParserService],
+  providers: [
+    MapsService,
+    GoogleEarthService,
+    KmlParserService,
+    KmlBuilderService,
+    PropertyKmlService,
+  ],
+  exports: [MapsService, KmlParserService, KmlBuilderService, PropertyKmlService],
 })
 export class MapsModule {}

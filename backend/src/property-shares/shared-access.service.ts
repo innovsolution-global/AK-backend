@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { RequestContext } from '../auth/auth.service';
+import { EarthLinkService } from './earth-link.service';
 
 /**
  * Vue exposée au bénéficiaire d'un partage (§22).
@@ -34,6 +35,8 @@ export interface SharedPropertyView {
   }>;
   googleMapsUrl: string | null;
   googleEarthUrl: string | null;
+  /** Lien KML stable, ouvrable dans Google Earth sans session (voir EarthLinkService). */
+  earthLinkUrl: string | null;
   geoFiles: Array<{ id: string; fileName: string; format: string }>;
   documentCount: number;
   share: {
@@ -50,13 +53,23 @@ export class SharedAccessService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
+    private readonly earthLinks: EarthLinkService,
   ) {}
 
   /** Liste des biens partagés avec ce bénéficiaire, en version resserrée. */
   async findMyProperties(user: AuthenticatedUser) {
     const shares = await this.findActiveShares(user.id);
 
-    return shares.map((share) => ({
+    // Un bien partagé plusieurs fois n'apparaît qu'une fois, avec le partage
+    // le plus récent (la liste arrive triée du plus récent au plus ancien).
+    const seen = new Set<string>();
+    const latest = shares.filter((share) => {
+      if (seen.has(share.property.id)) return false;
+      seen.add(share.property.id);
+      return true;
+    });
+
+    return latest.map((share) => ({
       id: share.property.id,
       reference: share.property.reference,
       name: share.property.name,
@@ -115,6 +128,7 @@ export class SharedAccessService {
         : [],
       googleMapsUrl: share.allowGoogleEarth ? property.googleMapsUrl : null,
       googleEarthUrl: share.allowGoogleEarth ? property.googleEarthUrl : null,
+      earthLinkUrl: share.allowGoogleEarth ? this.earthLinks.buildUrl(share.id) : null,
       geoFiles: share.allowGoogleEarth
         ? property.geoFiles.map((file) => ({
             id: file.id,
@@ -122,7 +136,9 @@ export class SharedAccessService {
             format: file.format,
           }))
         : [],
-      documentCount: share.allowDocuments ? share.documents.length : 0,
+      documentCount: share.allowDocuments
+        ? share.documents.filter(({ document }) => document.deletedAt === null).length
+        : 0,
       share: {
         expiresAt: share.expiresAt,
         allowDocuments: share.allowDocuments,
@@ -163,32 +179,27 @@ export class SharedAccessService {
     documentId: string,
     context: RequestContext,
   ) {
-    const link = await this.prisma.propertyShareDocument.findFirst({
-      where: {
-        documentId,
-        share: {
-          userId: user.id,
-          status: ShareStatus.ACTIVE,
-          expiresAt: { gt: new Date() },
-          allowDocuments: true,
-        },
-        document: { deletedAt: null },
-      },
+    const document = await this.prisma.propertyDocument.findFirst({
+      where: { id: documentId, deletedAt: null },
       select: {
-        shareId: true,
-        document: {
-          select: {
-            id: true,
-            storageKey: true,
-            fileName: true,
-            mimeType: true,
-            propertyId: true,
-          },
-        },
+        id: true,
+        storageKey: true,
+        fileName: true,
+        mimeType: true,
+        propertyId: true,
       },
     });
 
-    if (!link) throw this.notFound();
+    if (!document) throw this.notFound();
+
+    // Seul le partage en vigueur — le plus récent — fait foi : un document
+    // présent dans un partage antérieur, mais retiré du dernier, est refusé.
+    const share = await this.findActiveShare(user.id, document.propertyId);
+    const whitelisted = share.documents.some((entry) => entry.document.id === documentId);
+
+    if (!share.allowDocuments || !whitelisted) throw this.notFound();
+
+    const link = { shareId: share.id, document };
 
     const signed = await this.storage.getSignedDownloadUrl(
       link.document.storageKey,
@@ -264,6 +275,7 @@ export class SharedAccessService {
         expiresAt: { gt: new Date() },
         property: { deletedAt: null },
       },
+      orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         expiresAt: true,
@@ -290,6 +302,9 @@ export class SharedAccessService {
         expiresAt: { gt: new Date() },
         property: { deletedAt: null },
       },
+      // Plusieurs partages actifs peuvent coexister (données antérieures au
+      // remplacement automatique) : le plus récent est celui qui fait foi.
+      orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         expiresAt: true,

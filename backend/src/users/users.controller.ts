@@ -47,7 +47,7 @@ export class UsersController {
 
   @Post()
   @ApiOperation({
-    summary: 'Création d\'un utilisateur',
+    summary: "Création d'un utilisateur",
     description:
       "Sans mot de passe, le compte est créé inactif et un lien d'activation est envoyé par email.",
   })

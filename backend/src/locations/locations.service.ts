@@ -15,6 +15,11 @@ import type {
   QueryLocationsDto,
   UpdateLocationDto,
 } from './dto/location.dto';
+import {
+  GUINEA_LOCALITIES,
+  GUINEA_REGIONS,
+  normalizeLocalityName,
+} from './guinea-localities';
 
 const LOCATION_SELECT = {
   id: true,
@@ -41,6 +46,131 @@ export class LocationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Découpage administratif officiel (§6), enrichi de l'état de la base :
+   * chaque localité indique si elle est déjà enregistrée. Le formulaire de
+   * création s'en sert pour proposer les localités manquantes plutôt que de
+   * laisser ressaisir des noms au risque des fautes et des doublons.
+   */
+  async findReference() {
+    const existing = await this.prisma.location.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, code: true },
+    });
+
+    const byName = new Map(existing.map((row) => [normalizeLocalityName(row.name), row]));
+    const byCode = new Map(existing.map((row) => [row.code.toUpperCase(), row]));
+
+    return {
+      regions: GUINEA_REGIONS,
+      localities: GUINEA_LOCALITIES.map((locality) => {
+        const match =
+          byName.get(normalizeLocalityName(locality.name)) ?? byCode.get(locality.code);
+
+        return {
+          ...locality,
+          existingId: match?.id ?? null,
+          // Le code retenu est celui déjà en base quand la localité existe :
+          // l'afficher évite de croire à un doublon là où il n'y en a pas.
+          code: match?.code ?? locality.code,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Importe les localités officielles absentes de la base.
+   *
+   * Idempotent : la comparaison porte sur le nom normalisé (sans accents ni
+   * ponctuation) **et** sur le code, si bien qu'un second appel ne crée rien.
+   * Les communes de Conakry sont rattachées à leur zone spéciale, créée
+   * d'abord pour que le lien parent existe.
+   */
+  async importReference(actor: AuthenticatedUser, context: RequestContext) {
+    // Les localités supprimées sont incluses : leur code reste réservé, on les
+    // restaure plutôt que d'échouer sur un conflit d'unicité.
+    const existing = await this.prisma.location.findMany({
+      select: { id: true, name: true, code: true, deletedAt: true },
+    });
+
+    const live = existing.filter((row) => row.deletedAt === null);
+    const byName = new Map(live.map((row) => [normalizeLocalityName(row.name), row.id]));
+    const byCode = new Map(live.map((row) => [row.code.toUpperCase(), row.id]));
+    const deletedByCode = new Map(
+      existing
+        .filter((row) => row.deletedAt !== null)
+        .map((row) => [row.code.toUpperCase(), row.id]),
+    );
+    const idByCode = new Map<string, string>();
+
+    for (const row of live) idByCode.set(row.code.toUpperCase(), row.id);
+
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    // Les parents (Conakry) d'abord : une commune ne peut pas pointer vers une
+    // localité qui n'existe pas encore.
+    const ordered = [...GUINEA_LOCALITIES].sort(
+      (a, b) => Number(Boolean(a.parentCode)) - Number(Boolean(b.parentCode)),
+    );
+
+    for (const locality of ordered) {
+      const known =
+        byName.get(normalizeLocalityName(locality.name)) ?? byCode.get(locality.code);
+
+      if (known) {
+        idByCode.set(locality.code, known);
+        skipped.push(locality.name);
+        continue;
+      }
+
+      const parentId = locality.parentCode
+        ? idByCode.get(locality.parentCode)
+        : undefined;
+      const deletedId = deletedByCode.get(locality.code);
+
+      const data = {
+        name: locality.name,
+        code: locality.code,
+        type: locality.type,
+        region: locality.region,
+        parentId: parentId ?? null,
+        country: 'GN',
+      };
+
+      const row = deletedId
+        ? await this.prisma.location.update({
+            where: { id: deletedId },
+            data: { ...data, deletedAt: null, deletedById: null },
+            select: { id: true },
+          })
+        : await this.prisma.location.create({ data, select: { id: true } });
+
+      idByCode.set(locality.code, row.id);
+      byName.set(normalizeLocalityName(locality.name), row.id);
+      byCode.set(locality.code, row.id);
+      created.push(locality.name);
+    }
+
+    if (created.length > 0) {
+      await this.audit.record({
+        userId: actor.id,
+        action: AuditAction.CREATE,
+        entity: 'Location',
+        entityId: 'guinea-reference',
+        ip: context.ip,
+        userAgent: context.userAgent,
+        metadata: { imported: created.length, source: 'REFERENTIEL_GUINEE' },
+      });
+    }
+
+    return {
+      created: created.length,
+      skipped: skipped.length,
+      createdNames: created,
+    };
+  }
 
   async findAll(query: QueryLocationsDto) {
     const where: Prisma.LocationWhereInput = { deletedAt: null };
@@ -110,14 +240,47 @@ export class LocationsService {
       select: { id: true, deletedAt: true },
     });
 
-    if (existing) {
+    if (existing && !existing.deletedAt) {
       throw new ConflictException({
-        message: existing.deletedAt
-          ? 'Ce code est utilisé par une localité supprimée.'
-          : 'Ce code est déjà utilisé.',
+        message: 'Ce code est déjà utilisé.',
         error: 'CONFLICT',
         details: [{ field: 'code', message: 'Code déjà utilisé' }],
       });
+    }
+
+    // Une localité supprimée conserve son code (contrainte d'unicité globale) :
+    // la recréer à l'identique la **restaure** avec les valeurs fournies, au
+    // lieu d'un conflit que l'utilisateur ne pourrait pas résoudre. Les sites
+    // et terrains supprimés avec elle, eux, restent supprimés.
+    if (existing?.deletedAt) {
+      const restored = await this.prisma.location.update({
+        where: { id: existing.id },
+        data: {
+          deletedAt: null,
+          deletedById: null,
+          name: dto.name,
+          type: dto.type,
+          parentId: dto.parentId ?? null,
+          country: dto.country ?? 'GN',
+          region: dto.region ?? null,
+          latitude: dto.latitude ?? null,
+          longitude: dto.longitude ?? null,
+          description: dto.description ?? null,
+        },
+        select: LOCATION_SELECT,
+      });
+
+      await this.audit.record({
+        userId: actor.id,
+        action: AuditAction.UPDATE,
+        entity: 'Location',
+        entityId: restored.id,
+        ip: context.ip,
+        userAgent: context.userAgent,
+        metadata: { restored: true, code: dto.code },
+      });
+
+      return restored;
     }
 
     const location = await this.prisma.location.create({
@@ -159,7 +322,9 @@ export class LocationsService {
     if (dto.parentId !== undefined || dto.type !== undefined) {
       await this.assertParentIsValid(
         dto.type ?? current.type,
-        dto.parentId === null ? undefined : dto.parentId ?? current.parentId ?? undefined,
+        dto.parentId === null
+          ? undefined
+          : (dto.parentId ?? current.parentId ?? undefined),
         id,
       );
     }

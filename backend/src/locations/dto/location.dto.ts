@@ -36,8 +36,7 @@ export class CreateLocationDto {
   @Transform(upper)
   @IsString()
   @Matches(/^[A-Z0-9-]{2,20}$/, {
-    message:
-      'Le code doit contenir 2 à 20 caractères : majuscules, chiffres ou tirets.',
+    message: 'Le code doit contenir 2 à 20 caractères : majuscules, chiffres ou tirets.',
   })
   code!: string;
 

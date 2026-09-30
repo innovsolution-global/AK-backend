@@ -89,11 +89,7 @@ export class CompaniesService {
     });
   }
 
-  async create(
-    dto: CreateCompanyDto,
-    actor: AuthenticatedUser,
-    context: RequestContext,
-  ) {
+  async create(dto: CreateCompanyDto, actor: AuthenticatedUser, context: RequestContext) {
     await this.assertRegistrationNumberIsFree(dto.registrationNumber);
 
     const company = await this.prisma.company.create({
@@ -176,7 +172,7 @@ export class CompaniesService {
   }
 
   private async assertRegistrationNumberIsFree(
-    registrationNumber: string | undefined,
+    registrationNumber: string | null | undefined,
     excludeId?: string,
   ): Promise<void> {
     if (!registrationNumber) return;
@@ -194,9 +190,7 @@ export class CompaniesService {
       throw new ConflictException({
         message: "Ce numéro d'enregistrement est déjà utilisé.",
         error: 'CONFLICT',
-        details: [
-          { field: 'registrationNumber', message: 'Numéro déjà utilisé' },
-        ],
+        details: [{ field: 'registrationNumber', message: 'Numéro déjà utilisé' }],
       });
     }
   }

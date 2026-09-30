@@ -31,6 +31,8 @@ import {
   type PermissionCode,
   type RoleCode,
 } from '../src/common/constants/rbac.constants';
+import { parcelAround } from '../src/common/utils/geo.util';
+import { GUINEA_LOCALITIES } from '../src/locations/guinea-localities';
 
 const prisma = new PrismaClient();
 
@@ -261,10 +263,33 @@ const SITES = [
 async function seedGeography() {
   const locationIds = new Map<string, string>();
 
+  // Découpage administratif officiel (§6) : les 33 préfectures, Conakry et ses
+  // douze communes. Les villes de démonstration ci-dessous en font partie et
+  // sont simplement complétées de leurs coordonnées.
+  for (const locality of GUINEA_LOCALITIES) {
+    const parentId = locality.parentCode ? locationIds.get(locality.parentCode) : undefined;
+
+    const created = await prisma.location.upsert({
+      where: { code: locality.code },
+      update: { name: locality.name, region: locality.region, deletedAt: null },
+      create: {
+        name: locality.name,
+        code: locality.code,
+        type: locality.type,
+        region: locality.region,
+        parentId: parentId ?? null,
+        country: 'GN',
+      },
+      select: { id: true },
+    });
+
+    locationIds.set(locality.code, created.id);
+  }
+
   for (const city of CITIES) {
     const location = await prisma.location.upsert({
       where: { code: city.code },
-      update: { name: city.name },
+      update: { name: city.name, latitude: city.latitude, longitude: city.longitude },
       create: {
         name: city.name,
         code: city.code,
@@ -297,7 +322,9 @@ async function seedGeography() {
     siteIds.set(site.code, created.id);
   }
 
-  console.log(`  ✓ ${CITIES.length} villes, ${SITES.length} sites`);
+  console.log(
+    `  ✓ ${GUINEA_LOCALITIES.length} localités officielles (préfectures, Conakry et ses communes), ${SITES.length} sites de démonstration`,
+  );
 
   return { locationIds, siteIds };
 }
@@ -313,6 +340,16 @@ const PROPERTY_STATUSES: PropertyStatus[] = [
   PropertyStatus.EN_PROJET,
   PropertyStatus.EN_LITIGE,
 ];
+
+/** Date fictive : `months` mois avant aujourd'hui, au jour `day`. */
+function monthsAgo(months: number, day: number): Date {
+  const date = new Date();
+  date.setDate(1);
+  date.setMonth(date.getMonth() - months);
+  date.setDate(Math.min(day, 28));
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
 
 async function nextPropertyReference(): Promise<string> {
   const rows = await prisma.$queryRawUnsafe<Array<{ value: bigint }>>(
@@ -345,6 +382,18 @@ async function seedProperties(
     const site = SITES[index % siteCodes.length];
     const status = PROPERTY_STATUSES[index % PROPERTY_STATUSES.length];
     const areaHectares = 0.5 + (index % 8) * 1.25;
+    const areaSqm = areaHectares * 10_000;
+
+    const city = CITIES.find((candidate) => candidate.code === site.city)!;
+    // Dispersion autour de la ville pour obtenir des markers distincts.
+    const centerLatitude = city.latitude + (index % 7) * 0.004 - 0.012;
+    const centerLongitude = city.longitude + (index % 5) * 0.004 - 0.008;
+
+    // Emprise cohérente avec la superficie : c'est elle qui s'ouvre dans
+    // Google Earth et se dessine sur la carte. Un terrain sur quatre n'a que
+    // son repère, pour montrer le cas « coordonnées à compléter ».
+    const bornes =
+      index % 4 === 3 ? [] : parcelAround(centerLatitude, centerLongitude, areaSqm, index);
 
     const property = await prisma.property.create({
       data: {
@@ -352,10 +401,12 @@ async function seedProperties(
         name: `Domaine ${site.name} ${index + 1}`,
         locationId: geography.locationIds.get(site.city)!,
         siteId: geography.siteIds.get(site.code)!,
-        area: areaHectares * 10_000,
+        area: areaSqm,
         areaUnit: AreaUnit.M2,
-        areaSqm: areaHectares * 10_000,
-        purchaseDate: new Date(2019 + (index % 6), index % 12, 1 + (index % 27)),
+        areaSqm,
+        // Réparties sur les 24 derniers mois pour que la courbe d'acquisition du
+        // tableau de bord ait quelque chose à montrer en démonstration.
+        purchaseDate: monthsAgo(23 - ((index * 7) % 24), 1 + (index % 27)),
         sellerName: `Vendeur fictif ${index + 1}`,
         sellerContact: `+224 600 00 00 ${String(index + 10).padStart(2, '0')}`,
         status,
@@ -363,21 +414,24 @@ async function seedProperties(
         notes: 'Donnée fictive générée par le seed de développement.',
         createdById: adminId,
         coordinates: {
-          create: {
-            label: 'Point principal',
-            // Dispersion autour de la ville pour obtenir des markers distincts.
-            latitude:
-              CITIES.find((city) => city.code === site.city)!.latitude +
-              (index % 7) * 0.004 -
-              0.012,
-            longitude:
-              CITIES.find((city) => city.code === site.city)!.longitude +
-              (index % 5) * 0.004 -
-              0.008,
-            altitude: 15 + (index % 40),
-            isPrimary: true,
-            pointOrder: 0,
-          },
+          create: [
+            {
+              label: bornes.length > 0 ? 'Centre de l’emprise' : 'Point principal',
+              latitude: centerLatitude,
+              longitude: centerLongitude,
+              altitude: 15 + (index % 40),
+              isPrimary: true,
+              pointOrder: 0,
+            },
+            ...bornes.map((borne, order) => ({
+              label: borne.label ?? `Borne ${order + 1}`,
+              latitude: borne.latitude,
+              longitude: borne.longitude,
+              altitude: 15 + (index % 40),
+              isPrimary: false,
+              pointOrder: order + 1,
+            })),
+          ],
         },
         managers: {
           create: {
@@ -521,11 +575,73 @@ async function main(): Promise<void> {
 
   console.log('[4/5] Terrains');
   const properties = await seedProperties(geography, userIds, adminEmail);
+  await seedParcelOutlines();
 
   console.log('[5/5] Entreprises et projets');
   await seedProjects(properties, userIds, adminEmail);
 
   console.log('\nSeed terminé.\n');
+}
+
+/**
+ * Complète les terrains de démonstration créés avant l'arrivée des emprises :
+ * ceux qui n'ont qu'un repère reçoivent des bornes cohérentes avec leur
+ * superficie. Ne touche jamais aux terrains saisis par un utilisateur.
+ */
+async function seedParcelOutlines(): Promise<void> {
+  const candidates = await prisma.property.findMany({
+    where: {
+      deletedAt: null,
+      notes: 'Donnée fictive générée par le seed de développement.',
+      coordinates: { some: { isPrimary: true } },
+    },
+    select: {
+      id: true,
+      reference: true,
+      areaSqm: true,
+      coordinates: { select: { id: true, latitude: true, longitude: true, altitude: true, isPrimary: true } },
+    },
+  });
+
+  const toComplete = candidates.filter((property) => property.coordinates.length === 1);
+  if (toComplete.length === 0) return;
+
+  let completed = 0;
+
+  for (const [index, property] of toComplete.entries()) {
+    // Même règle qu'à la création : un terrain sur quatre reste sans emprise.
+    if (index % 4 === 3) continue;
+
+    const primary = property.coordinates[0];
+    const bornes = parcelAround(
+      Number(primary.latitude),
+      Number(primary.longitude),
+      Number(property.areaSqm),
+      index,
+    );
+
+    await prisma.$transaction([
+      prisma.propertyCoordinate.update({
+        where: { id: primary.id },
+        data: { label: 'Centre de l’emprise' },
+      }),
+      prisma.propertyCoordinate.createMany({
+        data: bornes.map((borne, order) => ({
+          propertyId: property.id,
+          label: borne.label ?? `Borne ${order + 1}`,
+          latitude: borne.latitude,
+          longitude: borne.longitude,
+          altitude: primary.altitude,
+          isPrimary: false,
+          pointOrder: order + 1,
+        })),
+      }),
+    ]);
+
+    completed += 1;
+  }
+
+  console.log(`  ✓ ${completed} emprises ajoutées aux terrains de démonstration`);
 }
 
 main()

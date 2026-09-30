@@ -1,10 +1,8 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { AuditAction, Prisma, ProjectStatus } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditAction, NotificationType, Prisma, ProjectStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { SitesService } from '../sites/sites.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginatedResult } from '../common/dto/paginated-result';
 import { ReferenceService } from '../common/services/reference.service';
@@ -124,6 +122,8 @@ export class ProjectsService {
     private readonly references: ReferenceService,
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
+    private readonly sites: SitesService,
   ) {}
 
   async findAll(user: AuthenticatedUser, query: QueryProjectsDto) {
@@ -171,12 +171,15 @@ export class ProjectsService {
     return project;
   }
 
-  async create(
-    dto: CreateProjectDto,
-    actor: AuthenticatedUser,
-    context: RequestContext,
-  ) {
-    await this.assertReferencesAreValid(dto.locationId, dto.siteId, dto.propertyId);
+  async create(dto: CreateProjectDto, actor: AuthenticatedUser, context: RequestContext) {
+    // Le quartier se saisit dans la fiche du projet, comme pour un bien.
+    const siteId =
+      dto.siteId ??
+      (dto.siteName
+        ? await this.sites.resolveByName(dto.locationId, dto.siteName, actor, context)
+        : undefined);
+
+    await this.assertReferencesAreValid(dto.locationId, siteId, dto.propertyId);
 
     const status = dto.status ?? ProjectStatus.IDEE;
 
@@ -188,16 +191,14 @@ export class ProjectsService {
           reference,
           name: dto.name,
           locationId: dto.locationId,
-          siteId: dto.siteId,
+          siteId,
           propertyId: dto.propertyId,
           companyId: dto.companyId,
           managerId: dto.managerId,
           description: dto.description,
           status,
           startDate: dto.startDate ? new Date(dto.startDate) : null,
-          expectedEndDate: dto.expectedEndDate
-            ? new Date(dto.expectedEndDate)
-            : null,
+          expectedEndDate: dto.expectedEndDate ? new Date(dto.expectedEndDate) : null,
           notes: dto.notes,
           createdById: actor.id,
           updatedById: actor.id,
@@ -239,15 +240,26 @@ export class ProjectsService {
   ) {
     const current = await this.findOne(actor, id);
 
+    const namedSiteId =
+      dto.siteId === undefined && dto.siteName
+        ? await this.sites.resolveByName(
+            dto.locationId ?? current.location.id,
+            dto.siteName,
+            actor,
+            context,
+          )
+        : undefined;
+
     if (
       dto.locationId !== undefined ||
       dto.siteId !== undefined ||
-      dto.propertyId !== undefined
+      dto.propertyId !== undefined ||
+      namedSiteId
     ) {
       await this.assertReferencesAreValid(
         dto.locationId ?? current.location.id,
-        dto.siteId === null ? undefined : dto.siteId ?? current.site?.id,
-        dto.propertyId === null ? undefined : dto.propertyId ?? current.property?.id,
+        dto.siteId === null ? undefined : (dto.siteId ?? namedSiteId ?? current.site?.id),
+        dto.propertyId === null ? undefined : (dto.propertyId ?? current.property?.id),
       );
     }
 
@@ -257,7 +269,7 @@ export class ProjectsService {
         data: {
           name: dto.name,
           locationId: dto.locationId,
-          siteId: dto.siteId === null ? null : dto.siteId,
+          siteId: dto.siteId === null ? null : (dto.siteId ?? namedSiteId),
           propertyId: dto.propertyId === null ? null : dto.propertyId,
           companyId: dto.companyId === null ? null : dto.companyId,
           managerId: dto.managerId === null ? null : dto.managerId,
@@ -361,6 +373,24 @@ export class ProjectsService {
         metadata: { from: project.status, to: dto.status, comment: dto.comment },
       });
     });
+
+    // §27 — le responsable est prévenu, sauf s'il est lui-même l'auteur du
+    // changement : se notifier soi-même n'apporte rien.
+    const recipient = project.manager?.id;
+
+    if (recipient && recipient !== actor.id) {
+      await this.notifications.create({
+        userId: recipient,
+        type:
+          dto.status === ProjectStatus.PERMIS_OBTENU
+            ? NotificationType.PERMIT_OBTAINED
+            : NotificationType.PROJECT_STATUS_CHANGED,
+        title: `Projet ${project.reference} : ${dto.status}`,
+        message: `${actor.firstName} ${actor.lastName} a fait passer « ${project.name} » de ${project.status} à ${dto.status}.`,
+        entityType: 'Project',
+        entityId: id,
+      });
+    }
 
     return this.findOne(actor, id);
   }
@@ -589,9 +619,7 @@ export class ProjectsService {
         throw new BadRequestException({
           message: "Le domaine associé n'est pas situé dans la ville sélectionnée.",
           error: 'VALIDATION_ERROR',
-          details: [
-            { field: 'propertyId', message: 'Terrain incohérent avec la ville' },
-          ],
+          details: [{ field: 'propertyId', message: 'Terrain incohérent avec la ville' }],
         });
       }
     }

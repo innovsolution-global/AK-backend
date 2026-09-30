@@ -1,8 +1,9 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -43,7 +44,7 @@ export class ForgotPasswordDto {
 }
 
 export class ResetPasswordDto {
-  @ApiProperty({ description: "Token reçu par email" })
+  @ApiProperty({ description: 'Token reçu par email' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(255)
@@ -75,6 +76,31 @@ export class ChangePasswordDto {
   newPassword!: string;
 }
 
+/**
+ * Modification par l'utilisateur de son propre état civil (§21).
+ *
+ * Le nom seulement : l'adresse email est l'identifiant de connexion, la
+ * changer demande de vérifier la nouvelle avant de basculer, et les rôles ne
+ * s'attribuent pas soi-même.
+ */
+export class UpdateProfileDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(2, { message: 'Le prénom doit contenir au moins deux caractères.' })
+  @MaxLength(100)
+  firstName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(2, { message: 'Le nom doit contenir au moins deux caractères.' })
+  @MaxLength(100)
+  lastName?: string;
+}
+
 export class VerifyEmailDto {
   @ApiProperty()
   @IsString()
@@ -96,7 +122,7 @@ export class AuthUserDto {
 }
 
 export class LoginResponseDto {
-  @ApiProperty({ description: "Access token JWT, à conserver en mémoire" })
+  @ApiProperty({ description: 'Access token JWT, à conserver en mémoire' })
   accessToken!: string;
 
   @ApiProperty({ description: 'Durée de validité en secondes' })

@@ -36,10 +36,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS companies_registration_number_unique
   ON companies (registration_number)
   WHERE registration_number IS NOT NULL AND deleted_at IS NULL;
 
--- Un bénéficiaire ne peut avoir qu'un seul partage actif sur un même bien.
-CREATE UNIQUE INDEX IF NOT EXISTS property_shares_active_unique
-  ON property_shares (property_id, lower(beneficiary_email))
-  WHERE status IN ('PENDING', 'ACTIVE');
+-- Plusieurs partages actifs d'un même bien avec la même personne sont permis
+-- (renvoi d'accès, échéances différentes) : l'index unique qui l'interdisait
+-- est retiré, y compris sur les bases déjà migrées.
+DROP INDEX IF EXISTS property_shares_active_unique;
+
+-- Recherche des partages d'un bénéficiaire sur un bien.
+CREATE INDEX IF NOT EXISTS property_shares_property_email_idx
+  ON property_shares (property_id, lower(beneficiary_email));
 
 -- --- Index de recherche globale (§24) ---------------------------------------
 CREATE INDEX IF NOT EXISTS properties_search_trgm

@@ -38,6 +38,28 @@ export class LocationsController {
     return this.locations.findAll(query);
   }
 
+  @Get('reference')
+  @RequirePermissions(PERMISSIONS.LOCATION_READ)
+  @ApiOperation({
+    summary: 'Découpage administratif officiel de la Guinée',
+    description:
+      "Régions, préfectures et communes de Conakry, chacune indiquant si elle est déjà enregistrée. Déclaré avant ':id' pour ne pas être capté comme un identifiant.",
+  })
+  findReference() {
+    return this.locations.findReference();
+  }
+
+  @Post('import-reference')
+  @RequirePermissions(PERMISSIONS.LOCATION_MANAGE)
+  @ApiOperation({
+    summary: 'Import des localités officielles manquantes',
+    description:
+      'Idempotent : les localités déjà présentes (par nom normalisé ou par code) sont ignorées.',
+  })
+  importReference(@CurrentUser() actor: AuthenticatedUser, @Req() request: Request) {
+    return this.locations.importReference(actor, contextOf(request));
+  }
+
   @Get(':id')
   @RequirePermissions(PERMISSIONS.LOCATION_READ)
   @ApiOperation({ summary: "Détail d'une localité" })
@@ -47,7 +69,7 @@ export class LocationsController {
 
   @Get(':id/sites')
   @RequirePermissions(PERMISSIONS.SITE_READ)
-  @ApiOperation({ summary: "Sites rattachés à une localité" })
+  @ApiOperation({ summary: 'Sites rattachés à une localité' })
   findSites(@Param() params: IdParamDto) {
     return this.locations.findSites(params.id);
   }
@@ -80,7 +102,8 @@ export class LocationsController {
   @RequirePermissions(PERMISSIONS.LOCATION_MANAGE)
   @ApiOperation({
     summary: "Suppression d'une localité",
-    description: 'Refusée tant que la localité porte des sites, terrains ou projets actifs.',
+    description:
+      'Refusée tant que la localité porte des sites, terrains ou projets actifs.',
   })
   remove(
     @Param() params: IdParamDto,

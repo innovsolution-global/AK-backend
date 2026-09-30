@@ -17,6 +17,7 @@ import type {
   ForgotPasswordDto,
   LoginDto,
   ResetPasswordDto,
+  UpdateProfileDto,
 } from './dto/auth.dto';
 import { AuthContextService } from './services/auth-context.service';
 import { PasswordService } from './services/password.service';
@@ -84,19 +85,14 @@ export class AuthService {
     }
 
     if (user.lockedUntil && user.lockedUntil > new Date()) {
-      const minutes = Math.ceil(
-        (user.lockedUntil.getTime() - Date.now()) / 60_000,
-      );
+      const minutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60_000);
       throw new UnauthorizedException({
         message: `Compte temporairement verrouillé. Réessayez dans ${minutes} minute(s).`,
         error: 'UNAUTHORIZED',
       });
     }
 
-    const passwordMatches = await this.passwords.verify(
-      user.passwordHash,
-      dto.password,
-    );
+    const passwordMatches = await this.passwords.verify(user.passwordHash, dto.password);
 
     if (!passwordMatches) {
       await this.registerFailedAttempt(user.id, user.failedLoginAttempts, context);
@@ -354,18 +350,13 @@ export class AuthService {
       select: { passwordHash: true },
     });
 
-    const matches = await this.passwords.verify(
-      record.passwordHash,
-      dto.currentPassword,
-    );
+    const matches = await this.passwords.verify(record.passwordHash, dto.currentPassword);
 
     if (!matches) {
       throw new BadRequestException({
         message: 'Le mot de passe actuel est incorrect.',
         error: 'VALIDATION_ERROR',
-        details: [
-          { field: 'currentPassword', message: 'Mot de passe incorrect' },
-        ],
+        details: [{ field: 'currentPassword', message: 'Mot de passe incorrect' }],
       });
     }
 
@@ -374,7 +365,7 @@ export class AuthService {
         message: "Le nouveau mot de passe doit différer de l'ancien.",
         error: 'VALIDATION_ERROR',
         details: [
-          { field: 'newPassword', message: "Doit différer du mot de passe actuel" },
+          { field: 'newPassword', message: 'Doit différer du mot de passe actuel' },
         ],
       });
     }
@@ -406,6 +397,59 @@ export class AuthService {
       userAgent: context.userAgent,
       metadata: { method: 'SELF_SERVICE' },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Profil
+  // -------------------------------------------------------------------------
+
+  /**
+   * L'utilisateur corrige son propre nom (§21).
+   *
+   * Un nom mal orthographié à la création du compte se lit partout — fiches,
+   * journal d'audit, emails de partage — et seul un administrateur pouvait le
+   * reprendre. La modification est journalisée comme toute écriture sur un
+   * compte : c'est une donnée d'identité.
+   */
+  async updateProfile(
+    userId: string,
+    dto: UpdateProfileDto,
+    context: RequestContext,
+  ): Promise<AuthenticatedUser> {
+    const current = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { firstName: true, lastName: true },
+    });
+
+    if (!current) throw new UnauthorizedException('Session invalide.');
+
+    const firstName = dto.firstName ?? current.firstName;
+    const lastName = dto.lastName ?? current.lastName;
+
+    if (firstName === current.firstName && lastName === current.lastName) {
+      return this.authContext.loadForUser(userId);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { firstName, lastName },
+    });
+
+    await this.audit.record({
+      userId,
+      action: AuditAction.UPDATE,
+      entity: 'User',
+      entityId: userId,
+      ip: context.ip,
+      userAgent: context.userAgent,
+      metadata: {
+        method: 'SELF_SERVICE',
+        before: `${current.firstName} ${current.lastName}`,
+        after: `${firstName} ${lastName}`,
+      },
+    });
+
+    return this.authContext.loadForUser(userId);
   }
 
   // -------------------------------------------------------------------------

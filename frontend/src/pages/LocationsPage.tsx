@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi, locationsApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
+import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { KpiRow, KpiSlot, Panel } from '@/components/ui/Panel';
@@ -11,10 +13,12 @@ import { Pagination } from '@/components/data/Pagination';
 import { useAuth } from '@/hooks/useAuth';
 import { useListParams } from '@/hooks/useListParams';
 import { humanizeEnum } from '@/utils/format';
+import { LocationFormModal } from '@/features/geography/LocationFormModal';
 
 export default function LocationsPage() {
   const { can } = useAuth();
   const { params, update, setPage } = useListParams({ sort: 'name', order: 'asc' });
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: queryKeys.locations.list(params),
@@ -37,6 +41,17 @@ export default function LocationsPage() {
         icon="city"
         title="Villes et préfectures"
         description={data ? `${data.meta.total} localité(s)` : undefined}
+        actions={
+          can('location.manage') && (
+            <Button
+              size="lg"
+              icon={<Icon name="plus" className="h-5 w-5" />}
+              onClick={() => setCreateOpen(true)}
+            >
+              Nouvelle ville
+            </Button>
+          )
+        }
       />
 
       <Panel>
@@ -100,6 +115,8 @@ export default function LocationsPage() {
           {data && <Pagination meta={data.meta} onPageChange={setPage} />}
         </div>
       </Panel>
+
+      <LocationFormModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

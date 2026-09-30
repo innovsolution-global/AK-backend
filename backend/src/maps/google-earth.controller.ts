@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -17,9 +18,11 @@ import {
   ApiConsumes,
   ApiOperation,
   ApiParam,
+  ApiProduces,
   ApiTags,
 } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { sendKml } from './kml-response';
 import { CurrentUser, RequirePermissions } from '../common/decorators';
 import { PERMISSIONS } from '../common/constants/rbac.constants';
 import { IdParamDto } from '../common/dto/id-param.dto';
@@ -67,6 +70,41 @@ export class GoogleEarthController {
     return this.googleEarth.upload(user, params.id, file, contextOf(request));
   }
 
+  @Get('export.kml')
+  @RequirePermissions(PERMISSIONS.PROPERTY_READ)
+  @ApiProduces('application/vnd.google-earth.kml+xml')
+  @ApiOperation({
+    summary: 'Fichier KML du terrain',
+    description:
+      "Généré à la demande depuis les coordonnées saisies et les fichiers importés : emprise, repère, bornes. S'ouvre directement dans Google Earth.",
+  })
+  async exportKml(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', UuidParam) id: string,
+    @Req() request: Request,
+    @Res() response: Response,
+  ) {
+    const document = await this.googleEarth.exportKml(user, id, contextOf(request));
+    sendKml(response, document.fileName, document.kml);
+  }
+
+  @Post(':fileId/apply-coordinates')
+  @RequirePermissions(PERMISSIONS.PROPERTY_UPDATE)
+  @ApiParam({ name: 'fileId', format: 'uuid' })
+  @ApiOperation({
+    summary: "Reprendre l'emprise du fichier comme coordonnées du terrain",
+    description:
+      'Les sommets du premier polygone deviennent les bornes, son centroïde le point principal. Remplace les coordonnées existantes.',
+  })
+  applyCoordinates(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', UuidParam) id: string,
+    @Param('fileId', UuidParam) fileId: string,
+    @Req() request: Request,
+  ) {
+    return this.googleEarth.applyCoordinates(user, id, fileId, contextOf(request));
+  }
+
   @Get(':fileId/geometry')
   @RequirePermissions(PERMISSIONS.PROPERTY_READ)
   @ApiParam({ name: 'fileId', format: 'uuid' })
@@ -84,7 +122,8 @@ export class GoogleEarthController {
   @ApiParam({ name: 'fileId', format: 'uuid' })
   @ApiOperation({
     summary: 'URL signée du fichier',
-    description: "Permet de l'ouvrir dans Google Earth. Le chemin physique n'est jamais exposé.",
+    description:
+      "Permet de l'ouvrir dans Google Earth. Le chemin physique n'est jamais exposé.",
   })
   download(
     @CurrentUser() user: AuthenticatedUser,

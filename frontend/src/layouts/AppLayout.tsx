@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
@@ -304,9 +304,7 @@ export function AppLayout() {
         </header>
 
         <main className="px-4 pb-10 pt-2 sm:px-6 lg:px-8">
-          <PageTransition>
-            <Outlet />
-          </PageTransition>
+          <PageTransition />
         </main>
       </div>
     </div>

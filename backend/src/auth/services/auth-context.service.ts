@@ -1,9 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import type {
-  PermissionCode,
-  RoleCode,
-} from '../../common/constants/rbac.constants';
+import type { PermissionCode, RoleCode } from '../../common/constants/rbac.constants';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import type { AccessTokenPayload } from './token.service';
 

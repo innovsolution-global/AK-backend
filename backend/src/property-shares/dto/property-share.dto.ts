@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -7,25 +7,22 @@ import {
   IsDateString,
   IsEmail,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { ShareStatus } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
-import {
-  PASSWORD_MAX_LENGTH,
-  PASSWORD_MIN_LENGTH,
-} from '../../auth/dto/auth.dto';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
-const toBoolean = ({ value }: { value: unknown }) =>
-  value === 'true' || value === true;
+const toBoolean = ({ value }: { value: unknown }) => value === 'true' || value === true;
 
 export class CreateShareDto {
   @ApiProperty()
@@ -93,7 +90,7 @@ export class CreateShareDto {
     type: [String],
     format: 'uuid',
     description:
-      'Liste blanche des documents visibles. Sans cette liste, aucun document n\'est accessible.',
+      "Liste blanche des documents visibles. Sans cette liste, aucun document n'est accessible.",
   })
   @IsOptional()
   @IsArray()
@@ -112,32 +109,20 @@ export class QuerySharesDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID('4')
   propertyId?: string;
-}
 
-export class ActivateShareDto {
-  @ApiProperty({ description: "Token reçu dans l'email d'invitation" })
-  @IsString()
-  @MinLength(10)
-  @MaxLength(255)
-  token!: string;
-
-  @ApiProperty({ minLength: PASSWORD_MIN_LENGTH, format: 'password' })
-  @IsString()
-  @MinLength(PASSWORD_MIN_LENGTH, {
-    message: `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères.`,
-  })
-  @MaxLength(PASSWORD_MAX_LENGTH)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
-    message:
-      'Le mot de passe doit contenir au moins une minuscule, une majuscule et un chiffre.',
-  })
-  password!: string;
-}
-
-export class ValidateTokenResponseDto {
-  @ApiProperty() valid!: boolean;
-  @ApiPropertyOptional() propertyReference?: string;
-  @ApiPropertyOptional() beneficiaryFirstName?: string;
-  @ApiPropertyOptional() expiresAt?: Date;
-  @ApiPropertyOptional() requiresPassword?: boolean;
+  /**
+   * Ne garde que les accès qui prennent fin dans les N jours (§27).
+   *
+   * C'est le filtre derrière l'indicateur « Expirent sous 7 jours » : sans
+   * lui, cliquer dessus ramenait tous les accès actifs, et l'échéance qu'on
+   * cherchait restait noyée dans la liste. Un partage déjà expiré en est
+   * exclu — il n'y a plus rien à renouveler, son statut l'a déjà dit.
+   */
+  @ApiPropertyOptional({ minimum: 1, maximum: 365, description: 'Expire dans N jours' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  expiringInDays?: number;
 }

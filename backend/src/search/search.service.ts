@@ -6,12 +6,7 @@ import { hasPermission } from '../common/types/authenticated-user';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 
 export type SearchEntity =
-  | 'property'
-  | 'project'
-  | 'site'
-  | 'location'
-  | 'document'
-  | 'company';
+  'property' | 'project' | 'site' | 'location' | 'document' | 'company';
 
 export interface SearchHit {
   entity: SearchEntity;
@@ -40,7 +35,10 @@ export class SearchService {
    * sous réserve de la permission correspondante : la recherche ne doit jamais
    * devenir un moyen détourné de découvrir des ressources inaccessibles.
    */
-  async search(user: AuthenticatedUser, term: string): Promise<{
+  async search(
+    user: AuthenticatedUser,
+    term: string,
+  ): Promise<{
     query: string;
     total: number;
     results: SearchHit[];

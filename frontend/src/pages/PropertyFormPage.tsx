@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { locationsApi, propertiesApi, sitesApi } from '@/api/endpoints';
+import { googleEarthApi, locationsApi, propertiesApi, sitesApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
 import { ApiError } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { Input, Select, Textarea } from '@/components/ui/Field';
+import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Alert, ErrorState, Skeleton } from '@/components/ui/feedback';
 import { useToast } from '@/components/ui/Toast';
-import { humanizeEnum } from '@/utils/format';
+import { Dropzone } from '@/features/documents/Dropzone';
+import { formatArea, humanizeEnum } from '@/utils/format';
 import { AREA_UNITS, PROPERTY_STATUSES } from '@/types/domain';
 
 interface FormState {
@@ -56,6 +58,8 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  /** Fichier Google Earth déposé avec la fiche : importé juste après l'enregistrement. */
+  const [geoFile, setGeoFile] = useState<File | null>(null);
 
   const isEdit = mode === 'edit';
 
@@ -66,8 +70,8 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
   });
 
   const { data: locations } = useQuery({
-    queryKey: queryKeys.locations.list({ type: 'VILLE' }),
-    queryFn: () => locationsApi.list({ limit: 100, type: 'VILLE' }),
+    queryKey: queryKeys.locations.list({ all: true }),
+    queryFn: () => locationsApi.all(),
   });
 
   // Les sites dépendent de la ville : la liste se recharge à chaque changement,
@@ -160,11 +164,42 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
         ]);
       }
 
-      return result;
+      // Le fichier Google Earth part une fois la fiche enregistrée : le
+      // backend en extrait l'emprise et la reprend comme coordonnées si le
+      // terrain n'en a pas encore. Un fichier illisible n'annule pas la fiche.
+      let geo: Awaited<ReturnType<typeof googleEarthApi.upload>> | null = null;
+      let geoError: string | null = null;
+      if (geoFile) {
+        try {
+          geo = await googleEarthApi.upload(result.id, geoFile);
+        } catch (caught) {
+          geoError = (caught as Error).message;
+        }
+      }
+
+      return { result, geo, geoError };
     },
-    onSuccess: (result) => {
+    onSuccess: ({ result, geo, geoError }) => {
       toast.success(isEdit ? 'Terrain mis à jour.' : `Terrain ${result.reference} créé.`);
+
+      if (geoError) {
+        toast.error(`Fiche enregistrée, mais le fichier Google Earth a été refusé : ${geoError}`);
+      } else if (geo?.autoApplied) {
+        toast.success(
+          `Emprise dessinée depuis ${geo.fileName} : ${geo.appliedVertexCount} bornes${
+            geo.measuredAreaSqm ? `, ${formatArea(geo.measuredAreaSqm)} mesurés` : ''
+          }.`,
+        );
+      } else if (geo && geo.extractionStatus === 'FAILED') {
+        toast.error(
+          `${geo.fileName} importé, mais sa géométrie n’a pas pu être lue : le terrain reste sans emprise.`,
+        );
+      } else if (geo) {
+        toast.success(`${geo.fileName} importé. L’emprise existante a été conservée.`);
+      }
+
       void queryClient.invalidateQueries({ queryKey: queryKeys.properties.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.map.all });
       navigate(`/properties/${result.id}`);
     },
     onError: (caught: Error) => {
@@ -235,7 +270,7 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
               }}
               placeholder="Sélectionner une ville"
               error={fieldErrors.locationId}
-              options={(locations?.data ?? []).map((location) => ({
+              options={(locations ?? []).map((location) => ({
                 value: location.id,
                 label: location.name,
               }))}
@@ -321,18 +356,57 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
         </section>
 
         <section className="card space-y-4 p-5">
-          <h2 className="text-sm font-semibold text-ink dark:text-white">Localisation</h2>
+          <div className="flex items-start gap-3">
+            <div className="icon-tile shrink-0 bg-gradient-to-br from-cyan-500 to-sky-600 text-white shadow-[0_10px_30px_-8px_rgb(6_182_212/0.6)]">
+              <Icon name="globe" className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-ink dark:text-white">
+                Emprise Google Earth
+              </h2>
+              <p className="mt-0.5 text-sm text-ink-muted">
+                Déposez le fichier .kml ou .kmz du géomètre : le contour du terrain est
+                dessiné automatiquement sur la carte et devient le fichier partagé aux
+                bénéficiaires. Polygone, chemin fermé ou non, bornes en épingles — tout
+                est lu.
+              </p>
+            </div>
+          </div>
+
+          <Dropzone
+            file={geoFile}
+            onFileChange={setGeoFile}
+            accept=".kml,.kmz"
+            label="Glissez le fichier Google Earth (.kml / .kmz)"
+          />
+
+          {geoFile && (
+            <Alert tone="success">
+              <strong>{geoFile.name}</strong> sera importé à l'enregistrement ; ses sommets
+              deviendront les bornes du terrain, son centre le repère de la carte.
+              {form.latitude && form.longitude
+                ? ' Les coordonnées saisies ci-dessous seront remplacées par celles du fichier.'
+                : ''}
+            </Alert>
+          )}
+        </section>
+
+        <section className="card space-y-4 p-5">
+          <h2 className="text-sm font-semibold text-ink dark:text-white">
+            Localisation manuelle
+          </h2>
 
           <Alert tone="info">
-            Sans coordonnées, le terrain n'apparaîtra pas sur la carte. Les bornes
-            complémentaires s'ajoutent depuis la fiche.
+            {geoFile
+              ? 'Facultatif : le fichier Google Earth fournit déjà la position.'
+              : 'Sans fichier Google Earth ni coordonnées, le terrain n’apparaîtra pas sur la carte. Les bornes s’ajoutent ensuite depuis l’onglet Google Earth de la fiche.'}
           </Alert>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
               label="Latitude"
               type="number"
-              step="0.0000001"
+              step="any"
               value={form.latitude}
               onChange={(event) => set('latitude', event.target.value)}
               placeholder="9.6412"
@@ -341,7 +415,7 @@ export default function PropertyFormPage({ mode }: { mode: 'create' | 'edit' }) 
             <Input
               label="Longitude"
               type="number"
-              step="0.0000001"
+              step="any"
               value={form.longitude}
               onChange={(event) => set('longitude', event.target.value)}
               placeholder="-13.5784"

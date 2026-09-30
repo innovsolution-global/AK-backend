@@ -18,11 +18,7 @@ import { PERMISSIONS } from '../common/constants/rbac.constants';
 import { IdParamDto } from '../common/dto/id-param.dto';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { RequestContext } from '../auth/auth.service';
-import {
-  CreateCompanyDto,
-  QueryCompaniesDto,
-  UpdateCompanyDto,
-} from './dto/company.dto';
+import { CreateCompanyDto, QueryCompaniesDto, UpdateCompanyDto } from './dto/company.dto';
 import { CompaniesService } from './companies.service';
 
 @ApiTags('Entreprises')

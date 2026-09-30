@@ -36,13 +36,14 @@ export function checksumBuffer(buffer: Buffer): string {
 }
 
 /**
- * Mot de passe temporaire aléatoire (§21) : utilisé uniquement si le lien
- * d'activation ne peut pas être employé. Toujours associé à
- * `mustChangePassword = true`.
+ * Mot de passe aléatoire (§21), envoyé par email au bénéficiaire d'un partage.
+ *
+ * Il sert directement à se connecter : aucun remplacement n'est imposé. Ce qui
+ * le borne, c'est l'échéance du partage, la révocation — immédiate — et
+ * « Renvoyer les accès », qui en génère un autre et coupe les sessions.
  */
 export function generateTemporaryPassword(length = 16): string {
-  const alphabet =
-    'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
   const bytes = randomBytes(length);
 
   let password = '';

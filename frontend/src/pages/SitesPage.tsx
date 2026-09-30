@@ -1,16 +1,22 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { locationsApi, sitesApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
+import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState, ErrorState } from '@/components/ui/feedback';
 import { DataTable } from '@/components/data/DataTable';
 import { Pagination } from '@/components/data/Pagination';
+import { useAuth } from '@/hooks/useAuth';
 import { useListParams } from '@/hooks/useListParams';
+import { SiteFormModal } from '@/features/geography/SiteFormModal';
 
 export default function SitesPage() {
   const { params, update, setPage } = useListParams({ sort: 'name', order: 'asc' });
+  const { can } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: queryKeys.sites.list(params),
@@ -19,8 +25,8 @@ export default function SitesPage() {
   });
 
   const { data: locations } = useQuery({
-    queryKey: queryKeys.locations.list({ type: 'VILLE' }),
-    queryFn: () => locationsApi.list({ limit: 100, type: 'VILLE' }),
+    queryKey: queryKeys.locations.list({ all: true }),
+    queryFn: () => locationsApi.all(),
   });
 
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
@@ -31,6 +37,17 @@ export default function SitesPage() {
         icon="site"
         title="Sites et quartiers"
         description={data ? `${data.meta.total} site(s)` : undefined}
+        actions={
+          can('site.manage') && (
+            <Button
+              size="lg"
+              icon={<Icon name="plus" className="h-5 w-5" />}
+              onClick={() => setCreateOpen(true)}
+            >
+              Nouveau site
+            </Button>
+          )
+        }
       />
 
       <Panel>
@@ -50,7 +67,7 @@ export default function SitesPage() {
               className="pill-outline h-11 px-4 text-sm font-medium"
             >
               <option value="">Toutes les villes</option>
-              {locations?.data.map((location) => (
+              {locations?.map((location) => (
                 <option key={location.id} value={location.id}>
                   {location.name}
                 </option>
@@ -93,6 +110,12 @@ export default function SitesPage() {
           {data && <Pagination meta={data.meta} onPageChange={setPage} />}
         </div>
       </Panel>
+
+      <SiteFormModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        defaultLocationId={typeof params.locationId === 'string' ? params.locationId : undefined}
+      />
     </div>
   );
 }

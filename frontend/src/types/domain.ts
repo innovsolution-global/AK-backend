@@ -102,6 +102,22 @@ export interface LocationRef {
   code?: string;
 }
 
+export type LocationType = 'PREFECTURE' | 'VILLE' | 'COMMUNE';
+
+/** Découpage administratif officiel servi par `GET /locations/reference`. */
+export interface GuineaReference {
+  regions: string[];
+  localities: Array<{
+    name: string;
+    code: string;
+    type: LocationType;
+    region: string;
+    parentCode?: string;
+    /** Identifiant en base si la localité est déjà enregistrée, sinon `null`. */
+    existingId: string | null;
+  }>;
+}
+
 export interface UserRef {
   id: string;
   firstName: string;
@@ -177,6 +193,13 @@ export interface GeoFile {
   extractionStatus: 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
   extractionError: string | null;
   createdAt: string;
+  /**
+   * Renseignés par la réponse d'import : l'emprise du fichier a-t-elle été
+   * reprise automatiquement comme coordonnées du terrain ?
+   */
+  autoApplied?: boolean;
+  appliedVertexCount?: number | null;
+  measuredAreaSqm?: number | null;
 }
 
 export interface MapMarker {
@@ -189,6 +212,37 @@ export interface MapMarker {
   areaSqm: number;
   locationName: string;
   siteName: string | null;
+}
+
+/** Emprise d'un terrain (GeoJSON), telle que servie par /maps/parcels. */
+export interface ParcelFeature {
+  type: 'Feature';
+  id: string;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
+  properties: {
+    id: string;
+    reference: string;
+    name: string;
+    status: PropertyStatus;
+    areaSqm: number;
+    measuredAreaSqm: number;
+    locationName: string;
+    siteName: string | null;
+    vertexCount: number;
+  };
+}
+
+export interface ParcelCollection {
+  type: 'FeatureCollection';
+  features: ParcelFeature[];
+}
+
+/** Résultat de la reprise d'une emprise depuis un fichier KML/KMZ. */
+export interface AppliedCoordinates {
+  coordinates: Coordinate[];
+  vertexCount: number;
+  measuredAreaSqm: number | null;
+  sourceName: string | null;
 }
 
 export interface ProjectListItem {
@@ -265,6 +319,8 @@ export interface PropertyShare {
   property: { id: string; reference: string; name: string };
   createdBy: UserRef | null;
   documents: Array<{ document: { id: string; name: string } }>;
+  /** Lien KML public, stable tant que le partage est actif ; null sinon. */
+  earthLinkUrl: string | null;
 }
 
 export interface Company {
@@ -446,6 +502,7 @@ export interface SharedPropertyView {
   coordinates: Coordinate[];
   googleMapsUrl: string | null;
   googleEarthUrl: string | null;
+  earthLinkUrl: string | null;
   geoFiles: Array<{ id: string; fileName: string; format: string }>;
   documentCount: number;
   share: {

@@ -62,6 +62,10 @@ bbox et distances approximatives. PostGIS est activé plus tard si des requêtes
 Toute requête authentifiée traverse cinq niveaux, du plus large au plus fin :
 
 1. **JwtAuthGuard** — le token est valide, non expiré, l'utilisateur est actif et non supprimé.
+   Ensuite **AppThrottlerGuard** limite le débit : par **utilisateur** sur les routes protégées
+   (tout un bureau partage souvent une seule IP), par **IP** sur les routes publiques (connexion,
+   invitation, lien Google Earth). Le limiteur strict « auth » ne s'applique qu'aux routes qui le
+   déclarent par `@Throttle({ auth: … })`.
 2. **SharedUserRestrictionGuard** — un `UTILISATEUR_PARTAGE` n'atteint que `/shared`, `/auth` et
    `/health` ; toute autre route est refusée avant d'arriver au contrôleur.
 3. **RolesGuard** — `@Roles('ADMIN')` : filtre grossier par rôle.

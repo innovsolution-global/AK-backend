@@ -47,9 +47,7 @@ export class ResponseEnvelopeInterceptor implements NestInterceptor {
  */
 function serialize(value: unknown): unknown {
   if (typeof value === 'bigint') {
-    return value <= BigInt(Number.MAX_SAFE_INTEGER)
-      ? Number(value)
-      : value.toString();
+    return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
   }
 
   if (value instanceof Date || value === null || typeof value !== 'object') {

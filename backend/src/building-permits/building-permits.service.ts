@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, BuildingPermitStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -172,10 +168,7 @@ export class BuildingPermitsService {
     return permit;
   }
 
-  private assertDatesAreCoherent(
-    issueDate?: string,
-    expiryDate?: string,
-  ): void {
+  private assertDatesAreCoherent(issueDate?: string, expiryDate?: string): void {
     if (!issueDate || !expiryDate) return;
 
     if (new Date(expiryDate) <= new Date(issueDate)) {

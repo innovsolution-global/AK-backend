@@ -42,6 +42,16 @@ export class CreateProjectDto {
   @IsUUID('4')
   siteId?: string;
 
+  @ApiPropertyOptional({
+    description: 'Quartier saisi à la main : retrouvé dans la ville choisie, ou créé.',
+    example: 'Nongo',
+  })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(150)
+  siteName?: string;
+
   @ApiPropertyOptional({ format: 'uuid', description: 'Domaine associé' })
   @IsOptional()
   @IsUUID('4')
@@ -111,6 +121,16 @@ export class UpdateProjectDto {
   @IsUUID('4')
   siteId?: string | null;
 
+  @ApiPropertyOptional({
+    description: 'Quartier saisi à la main : retrouvé dans la ville choisie, ou créé.',
+    example: 'Nongo',
+  })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(150)
+  siteName?: string;
+
   @ApiPropertyOptional({ format: 'uuid', nullable: true })
   @IsOptional()
   @IsUUID('4')
@@ -163,7 +183,7 @@ export class ChangeProjectStatusDto {
   })
   status!: ProjectStatus;
 
-  @ApiPropertyOptional({ description: 'Motif du changement, conservé dans l\'historique' })
+  @ApiPropertyOptional({ description: "Motif du changement, conservé dans l'historique" })
   @IsOptional()
   @Transform(trim)
   @IsString()

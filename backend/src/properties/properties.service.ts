@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuditAction, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { SitesService } from '../sites/sites.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginatedResult } from '../common/dto/paginated-result';
 import { ReferenceService } from '../common/services/reference.service';
@@ -22,10 +23,7 @@ import type {
   ReplaceCoordinatesDto,
   UpdatePropertyDto,
 } from './dto/property.dto';
-import {
-  PROPERTY_DETAIL_SELECT,
-  PropertiesRepository,
-} from './properties.repository';
+import { PROPERTY_DETAIL_SELECT, PropertiesRepository } from './properties.repository';
 
 @Injectable()
 export class PropertiesService {
@@ -35,6 +33,7 @@ export class PropertiesService {
     private readonly references: ReferenceService,
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
+    private readonly sites: SitesService,
   ) {}
 
   async findAll(user: AuthenticatedUser, query: QueryPropertiesDto) {
@@ -60,7 +59,15 @@ export class PropertiesService {
     actor: AuthenticatedUser,
     context: RequestContext,
   ) {
-    await this.assertGeographyIsConsistent(dto.locationId, dto.siteId);
+    // Le quartier se saisit dans la fiche : le nom donné retrouve le site
+    // existant de cette ville, ou en crée un.
+    const siteId =
+      dto.siteId ??
+      (dto.siteName
+        ? await this.sites.resolveByName(dto.locationId, dto.siteName, actor, context)
+        : undefined);
+
+    await this.assertGeographyIsConsistent(dto.locationId, siteId);
     this.assertSinglePrimaryCoordinate(dto.coordinates);
 
     if (dto.managerIds?.length) {
@@ -75,7 +82,7 @@ export class PropertiesService {
           reference,
           name: dto.name,
           locationId: dto.locationId,
-          siteId: dto.siteId,
+          siteId,
           area: dto.area,
           areaUnit: dto.areaUnit,
           areaSqm: toSquareMeters(dto.area, dto.areaUnit),
@@ -130,10 +137,20 @@ export class PropertiesService {
     if (!current) throw this.notFound();
 
     const locationId = dto.locationId ?? current.location.id;
-    const siteId =
-      dto.siteId === null ? undefined : dto.siteId ?? current.site?.id ?? undefined;
 
-    if (dto.locationId !== undefined || dto.siteId !== undefined) {
+    // Un quartier saisi à la main vaut choix explicite : il l'emporte sur le
+    // site actuel, comme le ferait un `siteId`.
+    const namedSiteId =
+      dto.siteId === undefined && dto.siteName
+        ? await this.sites.resolveByName(locationId, dto.siteName, actor, context)
+        : undefined;
+
+    const siteId =
+      dto.siteId === null
+        ? undefined
+        : (dto.siteId ?? namedSiteId ?? current.site?.id ?? undefined);
+
+    if (dto.locationId !== undefined || dto.siteId !== undefined || namedSiteId) {
       await this.assertGeographyIsConsistent(locationId, siteId);
     }
 
@@ -149,7 +166,7 @@ export class PropertiesService {
         data: {
           name: dto.name,
           locationId: dto.locationId,
-          siteId: dto.siteId === null ? null : dto.siteId,
+          siteId: dto.siteId === null ? null : (dto.siteId ?? namedSiteId),
           area: dto.area,
           areaUnit: dto.areaUnit,
           areaSqm: recomputeArea ? toSquareMeters(area, areaUnit) : undefined,
@@ -393,8 +410,7 @@ export class PropertiesService {
       label: point.label,
       latitude: new Prisma.Decimal(point.latitude),
       longitude: new Prisma.Decimal(point.longitude),
-      altitude:
-        point.altitude === undefined ? null : new Prisma.Decimal(point.altitude),
+      altitude: point.altitude === undefined ? null : new Prisma.Decimal(point.altitude),
       pointOrder: point.pointOrder ?? index,
       isPrimary: hasPrimary ? Boolean(point.isPrimary) : index === 0,
     }));

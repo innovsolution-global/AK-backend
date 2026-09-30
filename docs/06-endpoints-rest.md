@@ -92,11 +92,41 @@ Filtres : `status`, `locationId`, `siteId`, `managerId`, `minArea`, `maxArea`,
 |---|---|---|
 | GET | `/api/properties/:id/google-earth` | `property.read` |
 | POST | `/api/properties/:id/google-earth` | `document.upload` — `.kml` / `.kmz` |
+| GET | `/api/properties/:id/google-earth/export.kml` | `property.read` — **KML généré** du terrain (emprise, repère, bornes, fiche) |
+| GET | `/api/properties/:id/google-earth/:fileId/geometry` | `property.read` — GeoJSON extrait |
+| POST | `/api/properties/:id/google-earth/:fileId/apply-coordinates` | `property.update` — reprend le polygone du fichier comme coordonnées |
 | GET | `/api/properties/:id/google-earth/:fileId/download` | `document.read` (URL signée) |
 | DELETE | `/api/properties/:id/google-earth/:fileId` | `document.delete` |
+| GET | `/api/public/earth/:token.kml` | **public** — KML d'un bien partagé, lien signé lié au partage |
 
-La réponse expose `featureCount`, `bounds`, `extractionStatus` et le GeoJSON extrait quand
-l'analyse a réussi.
+La réponse d'import expose `featureCount`, `bounds`, `extractionStatus` et le GeoJSON extrait
+quand l'analyse a réussi, plus `autoApplied`, `appliedVertexCount` et `measuredAreaSqm` :
+**déposer le fichier suffit à dessiner le terrain**. Si le domaine n'a pas encore d'emprise
+(au plus un repère), le polygone extrait devient automatiquement ses coordonnées ; une emprise
+déjà saisie n'est jamais écrasée sans passer par `apply-coordinates`.
+
+Variantes de fichiers réels acceptées (recette du 2026-09-21) : KMZ dont le document ne s'appelle
+pas `doc.kml` ou vit dans un dossier ; `MultiGeometry` polygone + épingle ; `LinearRing` nu ;
+chemin `LineString` fermé **ou non** (« Ajouter un chemin » de Google Earth Pro) ; bornes en
+épingles seules ; espaces après les virgules ; tuples sans altitude ; UTF-8 avec BOM ; UTF-16 ;
+KML 2.1 et balises préfixées. Type MIME déclaré vide ou `application/x-zip-compressed` (Windows)
+accepté — la signature binaire fait foi. Un XML malformé donne un statut `FAILED`, jamais un 500.
+
+`export.kml` et le lien public renvoient le **même document** (`application/vnd.google-earth.kml+xml`,
+`Content-Disposition: attachment`), construit à la demande depuis les coordonnées du terrain et les
+géométries importées : l'emprise cyan (`#emprise`), le repère avec la fiche en bulle (`#repere`),
+les bornes numérotées (`#borne`). Le fichier s'ouvre dans Google Earth Pro, l'application mobile
+ou s'importe dans Google Earth Web.
+
+`apply-coordinates` prend le premier polygone (ou une ligne fermée, ou à défaut les points isolés)
+du fichier : ses sommets deviennent les bornes (`pointOrder` 1..n), son centroïde le point principal.
+Limite : 500 sommets ; au-delà le fichier reste consultable sans être repris.
+
+**Lien public** : le token vaut `base64url(shareId ‖ HMAC-SHA256(secret, shareId))` — rien n'est
+stocké, il se vérifie à temps constant, et il n'est servi que si le partage est `PENDING` ou `ACTIVE`,
+non expiré, avec `allowGoogleEarth`. Révocation ou expiration ⇒ 404 immédiat. Chaque téléchargement
+met à jour `lastAccessedAt` et produit une entrée d'audit `DOWNLOAD` (`via: EARTH_LINK`).
+Limité à 30 requêtes/minute par IP. Clé : `EARTH_LINK_SECRET`, sinon dérivée de `JWT_REFRESH_SECRET`.
 
 ## 6.7 Partage sécurisé (§20-21)
 
@@ -123,16 +153,22 @@ Corps de `POST /api/properties/:id/share` :
 
 `status` n'est jamais accepté en entrée : il est dérivé par le backend.
 
+Chaque partage renvoyé (création, listes) porte `earthLinkUrl` : le lien `.kml` public à transmettre
+au bénéficiaire, `null` si Google Earth n'est pas autorisé ou si le partage est révoqué/expiré.
+Ce lien figure aussi dans l'email d'invitation.
+
 ## 6.8 Accès du bénéficiaire (§22)
 
 | Méthode | Chemin | Accès |
 |---|---|---|
 | GET | `/api/shared/properties` | rôle `UTILISATEUR_PARTAGE` — les biens partagés actifs |
-| GET | `/api/shared/properties/:id` | idem — vue en liste blanche |
+| GET | `/api/shared/properties/:id` | idem — vue en liste blanche (inclut `earthLinkUrl`) |
 | GET | `/api/shared/properties/:id/documents` | idem — liste blanche du partage |
+| GET | `/api/shared/properties/:id/google-earth/:fileId/download` | idem — URL signée du fichier importé |
 | GET | `/api/shared/documents/:id/download` | idem — URL signée |
 
-Aucune autre route de l'API n'est accessible à ce rôle.
+Aucune autre route de l'API n'est accessible à ce rôle, hormis les routes publiques
+(`/api/public/earth/:token.kml`, activation).
 
 ## 6.9 Projets
 
@@ -177,6 +213,7 @@ Filtres : `status`, `propertyId`, `companyId`, `locationId`, `siteId`, `managerI
 | Méthode | Chemin | Permission |
 |---|---|---|
 | GET | `/api/maps/properties` | `map.read` — markers allégés (`id`, `reference`, `lat`, `lng`, `status`, `area`) |
+| GET | `/api/maps/parcels` | `map.read` — emprises en GeoJSON (`FeatureCollection` de polygones, un par terrain ≥ 3 bornes, avec `measuredAreaSqm`) |
 | GET | `/api/maps/bounds` | `map.read` — emprise globale du patrimoine |
 | GET | `/api/dashboard/overview` | `dashboard.read` |
 | GET | `/api/dashboard/properties` | `dashboard.read` — répartition par statut, ville, superficie |

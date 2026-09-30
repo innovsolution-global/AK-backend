@@ -2,10 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { AppConfigService } from '../config/app-config.service';
-import {
-  emailVerificationTemplate,
-  passwordResetTemplate,
-} from './mail.templates';
+import { emailVerificationTemplate, passwordResetTemplate } from './mail.templates';
 import {
   shareExpiringTemplate,
   shareInvitationTemplate,
@@ -62,9 +59,7 @@ export class MailService implements OnModuleInit {
       this.logger.log(`Email envoyé à ${message.to} (${info.messageId})`);
       return true;
     } catch (error) {
-      this.logger.error(
-        `Échec d'envoi à ${message.to} : ${(error as Error).message}`,
-      );
+      this.logger.error(`Échec d'envoi à ${message.to} : ${(error as Error).message}`);
       return false;
     }
   }
@@ -112,15 +107,22 @@ export class MailService implements OnModuleInit {
     to: string;
     firstName: string;
     senderName: string;
+    /** Destination du bouton : la fiche partagée, pas l'accueil. */
+    propertyId: string;
     propertyName: string;
     propertyReference: string;
     message?: string | null;
-    token: string;
+    /** Mot de passe généré pour cette invitation — toujours présent (§21). */
+    temporaryPassword: string;
     expiresAt: Date;
   }): Promise<boolean> {
-    const url = `${this.config.frontendUrl}/activate-share?token=${encodeURIComponent(
-      params.token,
-    )}`;
+    // Le bouton ouvre l'écran de connexion, en portant le bien à afficher
+    // ensuite. Viser directement la fiche laissait entrer celui qui avait déjà
+    // une session dans ce navigateur — un gestionnaire vérifiant son envoi
+    // voyait alors toute l'application. Une invitation s'adresse à son
+    // destinataire : elle demande donc ses identifiants, puis ouvre son bien.
+    const target = `/shared/properties/${params.propertyId}`;
+    const url = `${this.config.frontendUrl}/login?next=${encodeURIComponent(target)}`;
 
     const template = shareInvitationTemplate({
       appName: this.config.appName,
@@ -130,6 +132,8 @@ export class MailService implements OnModuleInit {
       propertyReference: params.propertyReference,
       message: params.message,
       url,
+      email: params.to,
+      temporaryPassword: params.temporaryPassword,
       expiresAt: params.expiresAt,
     });
 

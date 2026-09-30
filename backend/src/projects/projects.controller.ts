@@ -38,10 +38,7 @@ export class ProjectsController {
   @Get()
   @RequirePermissions(PERMISSIONS.PROJECT_READ)
   @ApiOperation({ summary: 'Liste paginée des projets' })
-  findAll(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: QueryProjectsDto,
-  ) {
+  findAll(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryProjectsDto) {
     return this.projects.findAll(user, query);
   }
 
@@ -119,10 +116,7 @@ export class ProjectsController {
     summary: 'Historique des statuts',
     description: "L'historique est append-only : il n'est jamais écrasé (§18).",
   })
-  statusHistory(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  statusHistory(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.projects.getStatusHistory(user, params.id);
   }
 
@@ -151,13 +145,7 @@ export class ProjectsController {
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.projects.updateComponent(
-      id,
-      componentId,
-      dto,
-      actor,
-      contextOf(request),
-    );
+    return this.projects.updateComponent(id, componentId, dto, actor, contextOf(request));
   }
 
   @Delete(':id/components/:componentId')
@@ -171,12 +159,7 @@ export class ProjectsController {
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.projects.removeComponent(
-      id,
-      componentId,
-      actor,
-      contextOf(request),
-    );
+    return this.projects.removeComponent(id, componentId, actor, contextOf(request));
   }
 }
 

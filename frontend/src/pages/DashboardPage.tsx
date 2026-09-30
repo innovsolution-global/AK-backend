@@ -50,6 +50,7 @@ export default function DashboardPage() {
   const documents = useQuery({ queryKey: queryKeys.dashboard.documents(), queryFn: dashboardApi.documents });
   const activity = useQuery({ queryKey: queryKeys.dashboard.activity(), queryFn: dashboardApi.activity });
   const markers = useQuery({ queryKey: queryKeys.map.markers({}), queryFn: () => mapsApi.markers({}) });
+  const parcels = useQuery({ queryKey: queryKeys.map.parcels({}), queryFn: () => mapsApi.parcels({}) });
   const acquisitions = useQuery({
     queryKey: queryKeys.dashboard.acquisitions(months),
     queryFn: () => dashboardApi.acquisitions(months),
@@ -446,7 +447,7 @@ export default function DashboardPage() {
           <FadeIn className="xl:col-span-7">
             <ChartCard
               title="Carte du patrimoine"
-              subtitle="Couleur du repère = statut du terrain"
+              subtitle={`Couleur du repère = statut · ${parcels.data?.features.length ?? 0} emprise(s) dessinée(s)`}
               action={
                 <Button variant="secondary" size="sm" onClick={() => navigate('/map')}>
                   Plein écran
@@ -457,7 +458,11 @@ export default function DashboardPage() {
               emptyLabel="Aucun terrain géolocalisé"
               className="h-full"
             >
-              <DashboardMap markers={markers.data ?? []} height={340} />
+              <DashboardMap
+                markers={markers.data ?? []}
+                parcels={parcels.data?.features ?? []}
+                height={340}
+              />
             </ChartCard>
           </FadeIn>
 

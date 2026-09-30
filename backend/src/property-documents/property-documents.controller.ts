@@ -150,13 +150,7 @@ export class DocumentsController {
     @UploadedFile() file: MulterFile,
     @Req() request: Request,
   ) {
-    return this.documents.uploadVersion(
-      user,
-      params.id,
-      dto,
-      file,
-      contextOf(request),
-    );
+    return this.documents.uploadVersion(user, params.id, dto, file, contextOf(request));
   }
 
   @Delete(':id')

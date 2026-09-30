@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -105,7 +101,7 @@ export class RolesService {
       if (missing.length > 0) {
         throw new BadRequestException({
           message:
-            "Le rôle ADMIN doit conserver la gestion des utilisateurs et des rôles.",
+            'Le rôle ADMIN doit conserver la gestion des utilisateurs et des rôles.',
           error: 'VALIDATION_ERROR',
           details: missing.map((code) => ({
             field: 'permissions',

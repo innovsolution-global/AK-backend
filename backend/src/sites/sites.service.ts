@@ -70,11 +70,7 @@ export class SitesService {
     return site;
   }
 
-  async create(
-    dto: CreateSiteDto,
-    actor: AuthenticatedUser,
-    context: RequestContext,
-  ) {
+  async create(dto: CreateSiteDto, actor: AuthenticatedUser, context: RequestContext) {
     await this.assertLocationExists(dto.locationId);
     await this.assertCodeIsFree(dto.code);
 
@@ -199,6 +195,135 @@ export class SitesService {
         details: [{ field: 'locationId', message: 'Localité introuvable' }],
       });
     }
+  }
+
+  /**
+   * Retrouve — ou crée — le quartier saisi à la main dans le formulaire d'un
+   * bien ou d'un projet (§6).
+   *
+   * Le quartier n'est plus un référentiel qu'on alimente avant de saisir : on
+   * l'écrit dans la fiche, et il existe. La recherche est insensible à la
+   * casse et aux espaces, pour que « Nongo », « nongo » et « Nongo  » ne
+   * fassent pas trois quartiers. Un site supprimé du même nom est réactivé
+   * plutôt que dupliqué — son code resterait pris de toute façon.
+   */
+  async resolveByName(
+    locationId: string,
+    rawName: string,
+    actor: AuthenticatedUser,
+    context: RequestContext,
+  ): Promise<string> {
+    const name = rawName.trim().replace(/\s+/g, ' ');
+
+    if (name.length < 2) {
+      throw new BadRequestException({
+        message: 'Le nom du quartier doit contenir au moins deux caractères.',
+        error: 'VALIDATION_ERROR',
+        details: [{ field: 'siteName', message: 'Nom trop court' }],
+      });
+    }
+
+    const existing = await this.prisma.site.findFirst({
+      where: { locationId, name: { equals: name, mode: 'insensitive' } },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (existing) {
+      if (existing.deletedAt) {
+        await this.prisma.site.update({
+          where: { id: existing.id },
+          data: { deletedAt: null, deletedById: null },
+        });
+      }
+      return existing.id;
+    }
+
+    const location = await this.prisma.location.findFirst({
+      where: { id: locationId, deletedAt: null },
+      select: { code: true },
+    });
+
+    if (!location) {
+      throw new BadRequestException({
+        message: "La ville sélectionnée n'existe pas.",
+        error: 'VALIDATION_ERROR',
+        details: [{ field: 'locationId', message: 'Ville introuvable' }],
+      });
+    }
+
+    let site: { id: string };
+
+    try {
+      site = await this.prisma.site.create({
+        data: {
+          locationId,
+          name,
+          code: await this.freeCodeFor(location.code, name),
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      // Deux fiches enregistrées au même instant avec le même quartier : la
+      // seconde bute sur l'unicité du code. Le quartier existe alors — on le
+      // reprend plutôt que de renvoyer une erreur incompréhensible.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const concurrent = await this.prisma.site.findFirst({
+          where: { locationId, name: { equals: name, mode: 'insensitive' } },
+          select: { id: true },
+        });
+
+        if (concurrent) return concurrent.id;
+      }
+
+      throw error;
+    }
+
+    await this.audit.record({
+      userId: actor.id,
+      action: AuditAction.CREATE,
+      entity: 'Site',
+      entityId: site.id,
+      ip: context.ip,
+      userAgent: context.userAgent,
+      metadata: { name, locationId, source: 'saisie dans une fiche' },
+    });
+
+    return site.id;
+  }
+
+  /**
+   * Code d'un quartier créé à la volée : `VILLE-QUARTIER`, suffixé si besoin.
+   *
+   * Même convention que la saisie manuelle, pour qu'un code créé depuis une
+   * fiche ne se distingue pas de celui d'un quartier créé au référentiel.
+   */
+  private async freeCodeFor(locationCode: string, name: string): Promise<string> {
+    const slug =
+      name
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toUpperCase()
+        .slice(0, 6) || 'QRT';
+
+    const base = `${locationCode}-${slug}`;
+
+    for (let suffix = 0; suffix < 100; suffix += 1) {
+      const code = suffix === 0 ? base : `${base}${suffix + 1}`;
+      const taken = await this.prisma.site.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (!taken) return code;
+    }
+
+    throw new ConflictException({
+      message: 'Impossible de générer un code pour ce quartier.',
+      error: 'CONFLICT',
+    });
   }
 
   private async assertCodeIsFree(code: string): Promise<void> {

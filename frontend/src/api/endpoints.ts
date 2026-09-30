@@ -3,6 +3,7 @@ import type { ApiResponse, PaginatedResponse } from './types';
 import type {
   AcquisitionPoint,
   AppUser,
+  AppliedCoordinates,
   AuditEntry,
   Company,
   DashboardActivity,
@@ -11,9 +12,11 @@ import type {
   DashboardProjects,
   DashboardProperties,
   GeoFile,
+  GuineaReference,
   LocationRef,
   MapMarker,
   Notification,
+  ParcelCollection,
   ProjectDetail,
   ProjectListItem,
   PropertyDetail,
@@ -131,7 +134,33 @@ export const googleEarthApi = {
     ),
   remove: (propertyId: string, fileId: string) =>
     http.delete(`/properties/${propertyId}/google-earth/${fileId}`).then(() => undefined),
+  /**
+   * KML généré du terrain. La réponse est le fichier lui-même (pas une
+   * enveloppe JSON) : on le récupère en blob pour déclencher le téléchargement
+   * avec le jeton d'accès, qu'un simple lien <a> ne pourrait pas porter.
+   */
+  exportKml: (propertyId: string) =>
+    http
+      .get<Blob>(`/properties/${propertyId}/google-earth/export.kml`, {
+        responseType: 'blob',
+      })
+      .then((r) => ({
+        blob: r.data,
+        fileName: fileNameFrom(r.headers['content-disposition']) ?? 'terrain.kml',
+      })),
+  applyCoordinates: (propertyId: string, fileId: string) =>
+    http
+      .post<ApiResponse<AppliedCoordinates>>(
+        `/properties/${propertyId}/google-earth/${fileId}/apply-coordinates`,
+      )
+      .then((r) => r.data.data),
 };
+
+function fileNameFrom(disposition: unknown): string | null {
+  if (typeof disposition !== 'string') return null;
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match?.[1] ?? null;
+}
 
 // --- Projets ----------------------------------------------------------------
 
@@ -160,6 +189,11 @@ export const projectsApi = {
 
 // --- Référentiels -----------------------------------------------------------
 
+type LocationOption = LocationRef & {
+  type: string;
+  _count: { sites: number; properties: number };
+};
+
 export const locationsApi = {
   list: (params: Record<string, unknown>) =>
     getList<LocationRef & { type: string; _count: { sites: number; properties: number } }>(
@@ -169,7 +203,43 @@ export const locationsApi = {
   sites: (id: string) => getOne<Array<LocationRef & { description: string | null }>>(
     `/locations/${id}/sites`,
   ),
+  /**
+   * Toutes les localités, pour les listes déroulantes.
+   *
+   * La pagination de l'API plafonne à 100 éléments par page : on enchaîne les
+   * pages plutôt que de demander une limite que le backend refuserait — le
+   * découpage guinéen en compte déjà 46, et les communes s'ajoutent.
+   */
+  all: async () => {
+    const first = await getList<LocationOption>('/locations', {
+      limit: 100,
+      sort: 'name',
+      order: 'asc',
+    });
+
+    const pages: LocationOption[] = [...first.data];
+    for (let page = 2; page <= first.meta.totalPages; page += 1) {
+      const next = await getList<LocationOption>('/locations', {
+        limit: 100,
+        page,
+        sort: 'name',
+        order: 'asc',
+      });
+      pages.push(...next.data);
+    }
+    return pages;
+  },
+  /** Découpage administratif officiel + état de la base (§6). */
+  reference: () => getOne<GuineaReference>('/locations/reference'),
+  importReference: () =>
+    http
+      .post<ApiResponse<{ created: number; skipped: number; createdNames: string[] }>>(
+        '/locations/import-reference',
+      )
+      .then((r) => r.data.data),
   create: (payload: unknown) => http.post('/locations', payload).then(() => undefined),
+  update: (id: string, payload: unknown) =>
+    http.patch(`/locations/${id}`, payload).then(() => undefined),
   remove: (id: string) => http.delete(`/locations/${id}`).then(() => undefined),
 };
 
@@ -182,6 +252,8 @@ export const sitesApi = {
       }
     >('/sites', params),
   create: (payload: unknown) => http.post('/sites', payload).then(() => undefined),
+  update: (id: string, payload: unknown) =>
+    http.patch(`/sites/${id}`, payload).then(() => undefined),
   remove: (id: string) => http.delete(`/sites/${id}`).then(() => undefined),
 };
 
@@ -265,6 +337,8 @@ export const sharedApi = {
 export const mapsApi = {
   markers: (params: Record<string, unknown>) =>
     getOne<MapMarker[]>('/maps/properties', params),
+  parcels: (params: Record<string, unknown>) =>
+    getOne<ParcelCollection>('/maps/parcels', params),
   bounds: (params: Record<string, unknown>) =>
     getOne<{
       minLatitude: number;

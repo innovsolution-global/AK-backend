@@ -130,6 +130,35 @@ mutation, `placeholderData: keepPreviousData` pour une pagination sans clignotem
 Les filtres de liste (`page`, `limit`, `sort`, `order`, `search`, `status`…) sont **synchronisés
 avec l'URL** : une vue filtrée est partageable et survit au rafraîchissement.
 
+## 5.5 bis Système de design
+
+Langage visuel adopté le 2026-09-20, transposé d'une référence « Sales Analytics » au contexte
+patrimonial. Tout est déclaré dans `tailwind.config.js` et `styles/tailwind.css` ; aucun composant
+ne porte de couleur en dur.
+
+| Jeton | Valeur | Usage |
+|---|---|---|
+| `ink` / `ink-soft` / `ink-muted` | bleu nuit `#14142b` et ses atténuations | titres, corps, libellés |
+| `brand` (orange) | `#f97316` → `#ea580c`, dégradé `bg-gradient-brand` | navigation active, action principale, série des graphiques (`#ea580c`, validé) |
+| `accent` (violet) | `#7c3aed` | tuile d'en-tête de page, valeur « Patrimoine », salutation |
+| `success` (vert) | `#1dbf73`, dégradé `bg-gradient-success` | export, variations positives, badges de compteur |
+| `night-900…500` | `#151517` → `#3a3a40` | surfaces du thème sombre, du plan au relief |
+| `rounded-card` / `rounded-panel` / `rounded-pill` | 24 px / 32 px / ∞ | cartes, panneau de contenu, tout le reste |
+| `shadow-glow-brand` / `-success` / `-accent` | halos colorés | réservés aux actions principales et à la tuile d'en-tête |
+
+Classes composées : `.card`, `.panel`, `.icon-disc` (disque porte-icône des indicateurs),
+`.icon-tile` (carré coloré d'en-tête), `.pill-outline` (champs et boutons secondaires).
+
+**Thème** : `darkMode: 'class'`, piloté par `ThemeProvider` (préférence utilisateur en
+`localStorage`, repli sur l'OS), basculé par `ThemeToggle` (soleil → lune, `role="switch"`).
+Les graphiques lisent leurs couleurs via `useChartTheme()` — le mode sombre a ses propres pas,
+validés contre la surface `#2a2a2a`, ce n'est pas une inversion automatique.
+
+**Motifs de page** : en-tête avec tuile d'icône colorée + titre + actions à droite (sélecteur de
+période en pilule, action verte avec halo) ; panneau gris arrondi qui porte les cartes ; tuiles
+indicateurs « disque d'icône · libellé · grand chiffre · pastille de variation » ; pagination en
+disques avec la page courante en pilule orange.
+
 ## 5.6 UX (§34)
 
 - **Shell** : sidebar repliable, topbar avec recherche globale (`⌘K`), notifications, menu profil.

@@ -109,6 +109,17 @@ export default function ProjectsPage() {
         icon="project"
         title="Projets"
         description={data ? `${data.meta.total} projet(s)` : undefined}
+        actions={
+          can('project.create') && (
+            <Button
+              size="lg"
+              icon={<Icon name="plus" className="h-5 w-5" />}
+              onClick={() => navigate('/projects/create')}
+            >
+              Nouveau projet
+            </Button>
+          )
+        }
       />
 
       <Panel>

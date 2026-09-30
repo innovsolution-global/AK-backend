@@ -32,7 +32,7 @@ export class CreateBuildingPermitDto {
   @IsDateString({}, { message: "La date d'expiration doit être au format ISO." })
   expiryDate?: string;
 
-  @ApiPropertyOptional({ example: 'Direction de l\'urbanisme' })
+  @ApiPropertyOptional({ example: "Direction de l'urbanisme" })
   @IsOptional()
   @Transform(trim)
   @IsString()

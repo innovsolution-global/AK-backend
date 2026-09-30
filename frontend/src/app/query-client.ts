@@ -45,6 +45,7 @@ export const queryKeys = {
 
   locations: {
     all: ['locations'] as const,
+    reference: () => [...queryKeys.locations.all, 'reference'] as const,
     list: (filters: unknown) => [...queryKeys.locations.all, 'list', filters] as const,
     sites: (id: string) => [...queryKeys.locations.all, id, 'sites'] as const,
   },
@@ -73,6 +74,7 @@ export const queryKeys = {
   map: {
     all: ['map'] as const,
     markers: (filters: unknown) => [...queryKeys.map.all, 'markers', filters] as const,
+    parcels: (filters: unknown) => [...queryKeys.map.all, 'parcels', filters] as const,
   },
 
   dashboard: {

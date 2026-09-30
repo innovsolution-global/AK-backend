@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { projectsApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
@@ -18,6 +18,7 @@ import { PROJECT_STATUSES } from '@/types/domain';
 
 export default function ProjectDetailPage() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const { can } = useAuth();
   const [statusOpen, setStatusOpen] = useState(false);
 
@@ -53,9 +54,19 @@ export default function ProjectDetailPage() {
         description={data.name}
         actions={
           can('project.update') && (
-            <Button size="lg" icon={<Icon name="trendUp" className="h-5 w-5" />} onClick={() => setStatusOpen(true)}>
-              Faire évoluer le statut
-            </Button>
+            <>
+              <Button
+                variant="secondary"
+                size="lg"
+                icon={<Icon name="edit" className="h-5 w-5" />}
+                onClick={() => navigate(`/projects/${id}/edit`)}
+              >
+                Modifier
+              </Button>
+              <Button size="lg" icon={<Icon name="trendUp" className="h-5 w-5" />} onClick={() => setStatusOpen(true)}>
+                Faire évoluer le statut
+              </Button>
+            </>
           )
         }
       />

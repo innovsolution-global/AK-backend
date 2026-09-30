@@ -1,22 +1,27 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Popup, useMap } from 'react-leaflet';
+import { BasemapLayer, BasemapSwitch, useBasemap } from './BasemapSwitch';
 import { statusMarkerIcon } from './markerIcon';
+import { ParcelsHalo, ParcelsLayer } from './ParcelsLayer';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatArea } from '@/utils/format';
-import type { MapMarker } from '@/types/domain';
+import type { MapMarker, ParcelFeature } from '@/types/domain';
 
 const FALLBACK_CENTER: [number, number] = [9.6412, -13.5784];
 
 interface DashboardMapProps {
   markers: MapMarker[];
+  parcels?: ParcelFeature[];
   height?: number;
 }
 
 /** Carte du patrimoine intégrée au tableau de bord (§28). */
-export function DashboardMap({ markers, height = 340 }: DashboardMapProps) {
+export function DashboardMap({ markers, parcels = [], height = 340 }: DashboardMapProps) {
+  const { basemap, select } = useBasemap('satellite');
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 dark:border-white/5">
+    <div className="relative overflow-hidden rounded-2xl border border-slate-100 dark:border-white/5">
       <MapContainer
         center={FALLBACK_CENTER}
         zoom={10}
@@ -26,8 +31,11 @@ export function DashboardMap({ markers, height = 340 }: DashboardMapProps) {
         scrollWheelZoom={false}
         attributionControl={false}
       >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <BasemapLayer basemap={basemap} />
         <FitToMarkers markers={markers} />
+
+        <ParcelsHalo features={parcels} />
+        <ParcelsLayer features={parcels} />
 
         {markers.map((marker) => (
           <Marker
@@ -56,6 +64,8 @@ export function DashboardMap({ markers, height = 340 }: DashboardMapProps) {
           </Marker>
         ))}
       </MapContainer>
+
+      <BasemapSwitch value={basemap} onChange={select} className="absolute right-3 top-3 z-[1000]" />
     </div>
   );
 }

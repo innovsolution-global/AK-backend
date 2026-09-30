@@ -45,12 +45,9 @@ export class SharedAccessController {
   @Get('properties/:id/documents')
   @ApiOperation({
     summary: 'Documents autorisés',
-    description: "Uniquement ceux inscrits sur la liste blanche du partage.",
+    description: 'Uniquement ceux inscrits sur la liste blanche du partage.',
   })
-  findDocuments(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  findDocuments(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.shared.findDocuments(user, params.id);
   }
 
@@ -73,11 +70,7 @@ export class SharedAccessController {
     @Param() params: IdParamDto,
     @Req() request: Request,
   ) {
-    return this.shared.getDocumentDownloadUrl(
-      user,
-      params.id,
-      contextOf(request),
-    );
+    return this.shared.getDocumentDownloadUrl(user, params.id, contextOf(request));
   }
 }
 

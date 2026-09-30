@@ -35,9 +35,7 @@ export function errorCodeFromStatus(status: number): ErrorCode {
     case HttpStatus.TOO_MANY_REQUESTS:
       return ERROR_CODES.RATE_LIMITED;
     default:
-      return status >= 500
-        ? ERROR_CODES.INTERNAL_ERROR
-        : ERROR_CODES.VALIDATION_ERROR;
+      return status >= 500 ? ERROR_CODES.INTERNAL_ERROR : ERROR_CODES.VALIDATION_ERROR;
   }
 }
 

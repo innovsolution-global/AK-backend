@@ -34,8 +34,7 @@ export class CreateSiteDto {
   @Transform(upper)
   @IsString()
   @Matches(/^[A-Z0-9-]{2,30}$/, {
-    message:
-      'Le code doit contenir 2 à 30 caractères : majuscules, chiffres ou tirets.',
+    message: 'Le code doit contenir 2 à 30 caractères : majuscules, chiffres ou tirets.',
   })
   code!: string;
 

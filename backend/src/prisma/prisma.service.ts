@@ -23,10 +23,7 @@ export const SOFT_DELETE_MODELS = [
 ] as const;
 
 @Injectable()
-export class PrismaService
-  extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy
-{
+export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
@@ -46,16 +43,15 @@ export class PrismaService
 
     if (process.env.NODE_ENV === 'development') {
       // Journalise les requêtes lentes pour repérer les index manquants (§38).
-      (this as unknown as { $on: (e: string, cb: (p: Prisma.QueryEvent) => void) => void }).$on(
-        'query',
-        (event: Prisma.QueryEvent) => {
-          if (event.duration > 200) {
-            this.logger.warn(
-              `Requête lente (${event.duration} ms) : ${event.query}`,
-            );
-          }
-        },
-      );
+      (
+        this as unknown as {
+          $on: (e: string, cb: (p: Prisma.QueryEvent) => void) => void;
+        }
+      ).$on('query', (event: Prisma.QueryEvent) => {
+        if (event.duration > 200) {
+          this.logger.warn(`Requête lente (${event.duration} ms) : ${event.query}`);
+        }
+      });
     }
   }
 
@@ -76,9 +72,7 @@ export class PrismaService
    */
   async truncateAll(): Promise<void> {
     if (process.env.NODE_ENV !== 'test') {
-      throw new Error(
-        'truncateAll() est réservé à NODE_ENV=test : opération refusée.',
-      );
+      throw new Error('truncateAll() est réservé à NODE_ENV=test : opération refusée.');
     }
 
     const tables = await this.$queryRaw<Array<{ tablename: string }>>`

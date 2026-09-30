@@ -1,0 +1,26 @@
+{
+  "name": "ak-immo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AK IMMO — plateforme privée de gestion de patrimoine immobilier",
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs up",
+    "dev:status": "node scripts/dev.mjs status",
+    "dev:down": "node scripts/dev.mjs down",
+    "dev:infra": "node scripts/dev.mjs infra",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
+    "test": "npm test --workspace backend",
+    "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "seed": "npm run seed --workspace backend",
+    "migrate": "npm run prisma:migrate --workspace backend",
+    "test:e2e": "npm run test:e2e --workspace frontend"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

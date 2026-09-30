@@ -31,7 +31,7 @@ export class UploadPropertyDocumentDto {
 
 export class UploadDocumentVersionDto {
   @ApiPropertyOptional({
-    description: "Nouveau libellé ; conserve celui de la version précédente si absent.",
+    description: 'Nouveau libellé ; conserve celui de la version précédente si absent.',
   })
   @IsOptional()
   @Transform(trim)

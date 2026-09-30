@@ -1,17 +1,21 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Popup, useMap } from 'react-leaflet';
 import { locationsApi, mapsApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Panel } from '@/components/ui/Panel';
+import { KpiRow, KpiSlot, Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ErrorState, Skeleton } from '@/components/ui/feedback';
+import { KpiCard } from '@/components/charts/KpiCard';
 import { useListParams } from '@/hooks/useListParams';
 import { formatArea, humanizeEnum } from '@/utils/format';
+import { BasemapLayer, BasemapSwitch, useBasemap } from '@/features/map/BasemapSwitch';
 import { statusMarkerIcon } from '@/features/map/markerIcon';
+import { ParcelsHalo, ParcelsLayer } from '@/features/map/ParcelsLayer';
+import { PARCEL_COLOR } from '@/features/map/parcel';
 import { PROPERTY_STATUSES, type MapMarker } from '@/types/domain';
 
 /** Cadrage par défaut : Conakry, lorsqu'aucun terrain n'a de coordonnées. */
@@ -35,14 +39,23 @@ export default function MapPage() {
     queryFn: () => mapsApi.markers(filters),
   });
 
-  const { data: locations } = useQuery({
-    queryKey: queryKeys.locations.list({ type: 'VILLE' }),
-    queryFn: () => locationsApi.list({ limit: 100, type: 'VILLE' }),
+  const parcels = useQuery({
+    queryKey: queryKeys.map.parcels(filters),
+    queryFn: () => mapsApi.parcels(filters),
   });
+
+  const { data: locations } = useQuery({
+    queryKey: queryKeys.locations.list({ all: true }),
+    queryFn: () => locationsApi.all(),
+  });
+
+  const { basemap, select } = useBasemap('satellite');
 
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
   const markers = data ?? [];
+  const features = parcels.data?.features ?? [];
+  const outlinedSqm = features.reduce((sum, feature) => sum + feature.properties.areaSqm, 0);
 
   return (
     <div>
@@ -52,7 +65,7 @@ export default function MapPage() {
         description={
           isLoading
             ? undefined
-            : `${markers.length} terrain(s) localisé(s)`
+            : `${markers.length} terrain(s) localisé(s) · ${features.length} emprise(s) dessinée(s)`
         }
         actions={
           hasFilters && (
@@ -64,6 +77,42 @@ export default function MapPage() {
       />
 
       <Panel>
+      <KpiRow>
+        <KpiSlot>
+          <KpiCard
+            icon="site"
+            label="Terrains localisés"
+            value={markers.length}
+            loading={isLoading}
+            hint="Dotés d’un point principal"
+          />
+        </KpiSlot>
+        <KpiSlot>
+          <KpiCard
+            icon="layers"
+            label="Emprises dessinées"
+            value={features.length}
+            loading={parcels.isLoading}
+            hint={
+              markers.length > 0
+                ? `${Math.round((features.length / markers.length) * 100)} % des terrains localisés`
+                : 'Ajoutez des bornes depuis une fiche'
+            }
+          />
+        </KpiSlot>
+        <KpiSlot>
+          <KpiCard
+            icon="land"
+            label="Superficie bornée"
+            value={outlinedSqm / 10_000}
+            unit="ha"
+            decimals={outlinedSqm >= 1_000_000 ? 0 : 1}
+            loading={parcels.isLoading}
+            hint="Somme des emprises visibles"
+          />
+        </KpiSlot>
+      </KpiRow>
+
       <div className="card flex flex-col gap-3 p-5 sm:flex-row">
         <input
           type="search"
@@ -92,7 +141,7 @@ export default function MapPage() {
           className="pill-outline h-11 px-4 text-sm font-medium"
         >
           <option value="">Toutes les villes</option>
-          {locations?.data.map((location) => (
+          {locations?.map((location) => (
             <option key={location.id} value={location.id}>
               {location.name}
             </option>
@@ -103,19 +152,19 @@ export default function MapPage() {
       {isLoading ? (
         <Skeleton className="h-[60vh] rounded-card" />
       ) : (
-        <div className="card overflow-hidden p-2">
+        <div className="card relative overflow-hidden p-2">
           <MapContainer
             center={FALLBACK_CENTER}
             zoom={FALLBACK_ZOOM}
             style={{ height: '60vh', minHeight: 420 }}
             scrollWheelZoom
           >
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution="&copy; OpenStreetMap contributors"
-            />
+            <BasemapLayer basemap={basemap} />
 
             <FitToMarkers markers={markers} />
+
+            <ParcelsHalo features={features} />
+            <ParcelsLayer features={features} />
 
             {markers.map((marker) => (
               <Marker
@@ -160,6 +209,12 @@ export default function MapPage() {
             ))}
           </MapContainer>
 
+          <BasemapSwitch
+            value={basemap}
+            onChange={select}
+            className="absolute right-5 top-5 z-[1000]"
+          />
+
           {markers.length === 0 && (
             <p className="border-t border-slate-100 dark:border-white/5 px-5 py-4 text-center text-sm text-ink-muted">
               Aucun terrain localisé pour ces critères. Ajoutez des coordonnées
@@ -174,6 +229,14 @@ export default function MapPage() {
         {PROPERTY_STATUSES.map((status) => (
           <StatusBadge key={status} status={status} kind="property" />
         ))}
+        <span className="ml-auto inline-flex items-center gap-2 text-xs text-ink-muted">
+          <span
+            aria-hidden
+            className="inline-block h-3 w-5 rounded-sm border-2"
+            style={{ borderColor: PARCEL_COLOR, backgroundColor: `${PARCEL_COLOR}33` }}
+          />
+          Emprise bornée (identique au fichier Google Earth)
+        </span>
       </div>
       </Panel>
     </div>

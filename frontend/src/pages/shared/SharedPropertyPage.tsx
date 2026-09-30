@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { sharedApi } from '@/api/endpoints';
@@ -9,7 +10,9 @@ import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Alert, ErrorState, Skeleton } from '@/components/ui/feedback';
 import { useToast } from '@/components/ui/Toast';
-import { PropertyMiniMap } from '@/features/map/PropertyMiniMap';
+import { EarthLinkCard } from '@/features/map/EarthLinkCard';
+import { ParcelMap } from '@/features/map/ParcelMap';
+import { centroid, parcelRing, primaryPoint, toParcelPoints } from '@/features/map/parcel';
 import {
   formatAreaWithUnit,
   formatCoordinate,
@@ -40,6 +43,10 @@ export default function SharedPropertyPage() {
     enabled: id.length > 0 && (data?.share.allowDocuments ?? false),
   });
 
+  const coordinates = data?.coordinates ?? [];
+  const points = useMemo(() => toParcelPoints(coordinates), [coordinates]);
+  const ring = useMemo(() => parcelRing(points), [points]);
+
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
   if (isLoading || !data) {
@@ -51,7 +58,9 @@ export default function SharedPropertyPage() {
     );
   }
 
-  const primary = data.coordinates.find((point) => point.isPrimary);
+  const primary = primaryPoint(points);
+  const center = ring.length >= 3 ? centroid(ring) : primary;
+  const areaSqm = Number(data.areaSqm);
 
   const download = async (documentId: string) => {
     try {
@@ -88,6 +97,30 @@ export default function SharedPropertyPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
+          {data.share.allowCoordinates && primary && (
+            <section className="card overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3 dark:border-white/5">
+                <div>
+                  <h2 className="text-sm font-semibold text-ink dark:text-white">
+                    {ring.length >= 3 ? 'Emprise du terrain' : 'Localisation du terrain'}
+                  </h2>
+                  <p className="text-xs text-ink-muted">
+                    {ring.length >= 3
+                      ? `${ring.length} bornes · même contour que dans le fichier Google Earth`
+                      : 'Repère du terrain sur l’imagerie satellite'}
+                  </p>
+                </div>
+              </div>
+              <ParcelMap
+                coordinates={data.coordinates}
+                status={data.status}
+                label={data.reference}
+                areaSqm={areaSqm}
+                height={400}
+              />
+            </section>
+          )}
+
           <section className="card p-5">
             <h2 className="mb-4 text-sm font-semibold text-ink dark:text-white">
               Informations
@@ -197,21 +230,21 @@ export default function SharedPropertyPage() {
         </div>
 
         <div className="space-y-5">
-          {data.share.allowCoordinates && primary && (
-            <section className="card overflow-hidden">
-              <PropertyMiniMap
-                latitude={Number(primary.latitude)}
-                longitude={Number(primary.longitude)}
-                label={data.reference}
-                status={data.status}
-              />
-            </section>
+          {data.share.allowGoogleEarth && (
+            <EarthLinkCard
+              reference={data.reference}
+              center={data.share.allowCoordinates ? center : null}
+              areaSqm={areaSqm}
+              vertexCount={ring.length}
+              publicUrl={data.earthLinkUrl}
+              legacyUrl={data.googleEarthUrl}
+            />
           )}
 
-          {data.share.allowGoogleEarth && (
+          {data.share.allowGoogleEarth && (data.googleMapsUrl || data.geoFiles.length > 0) && (
             <section className="card p-5">
               <h2 className="mb-3 text-sm font-semibold text-ink dark:text-white">
-                Cartographie
+                Autres fichiers cartographiques
               </h2>
 
               <div className="space-y-2">
@@ -226,17 +259,6 @@ export default function SharedPropertyPage() {
                     Ouvrir dans Google Maps
                   </a>
                 )}
-                {data.googleEarthUrl && (
-                  <a
-                    href={data.googleEarthUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300"
-                  >
-                    <Icon name="globe" className="h-4 w-4" />
-                    Ouvrir dans Google Earth
-                  </a>
-                )}
 
                 {data.geoFiles.map((geo) => (
                   <button
@@ -246,18 +268,18 @@ export default function SharedPropertyPage() {
                     className="flex w-full items-center gap-2 text-left text-sm text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300"
                   >
                     <Icon name="download" className="h-4 w-4" />
-                    {geo.fileName} ({geo.format})
+                    {geo.fileName} ({geo.format}) — relevé d’origine
                   </button>
                 ))}
-
-                {!data.googleMapsUrl &&
-                  !data.googleEarthUrl &&
-                  data.geoFiles.length === 0 && (
-                    <p className="text-sm text-ink-muted">
-                      Aucun élément cartographique disponible.
-                    </p>
-                  )}
               </div>
+            </section>
+          )}
+
+          {!data.share.allowGoogleEarth && !data.share.allowCoordinates && (
+            <section className="card p-5">
+              <p className="text-sm text-ink-muted">
+                La cartographie de ce bien ne vous a pas été communiquée.
+              </p>
             </section>
           )}
         </div>

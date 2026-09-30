@@ -1,16 +1,26 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { companiesApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
+import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState, ErrorState } from '@/components/ui/feedback';
 import { DataTable } from '@/components/data/DataTable';
 import { Pagination } from '@/components/data/Pagination';
+import { useAuth } from '@/hooks/useAuth';
 import { useListParams } from '@/hooks/useListParams';
+import { CompanyFormModal } from '@/features/companies/CompanyFormModal';
+import type { Company } from '@/types/domain';
 
 export default function CompaniesPage() {
   const { params, update, setPage } = useListParams({ sort: 'name', order: 'asc' });
+  const { can } = useAuth();
+  const canManage = can('company.manage');
+
+  /** `null` : fenêtre fermée · `'new'` : création · entreprise : modification. */
+  const [editing, setEditing] = useState<Company | 'new' | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: queryKeys.companies.list(params),
@@ -26,6 +36,17 @@ export default function CompaniesPage() {
         icon="company"
         title="Entreprises et gérants"
         description={data ? `${data.meta.total} entreprise(s)` : undefined}
+        actions={
+          canManage && (
+            <Button
+              size="lg"
+              icon={<Icon name="plus" className="h-5 w-5" />}
+              onClick={() => setEditing('new')}
+            >
+              Nouvelle entreprise
+            </Button>
+          )
+        }
       />
 
       <Panel>
@@ -78,12 +99,18 @@ export default function CompaniesPage() {
             ]}
             rows={data?.data ?? []}
             rowKey={(row) => row.id}
+            onRowClick={canManage ? (row) => setEditing(row) : undefined}
             loading={isLoading}
             empty={
               <EmptyState
                 title="Aucune entreprise"
                 description="Enregistrez les entreprises qui pilotent vos projets."
                 icon={<Icon name="company" className="h-8 w-8" />}
+                action={
+                  canManage && (
+                    <Button onClick={() => setEditing('new')}>Nouvelle entreprise</Button>
+                  )
+                }
               />
             }
           />
@@ -91,6 +118,13 @@ export default function CompaniesPage() {
           {data && <Pagination meta={data.meta} onPageChange={setPage} />}
         </div>
       </Panel>
+
+      <CompanyFormModal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        company={editing === 'new' ? null : editing}
+        canDelete={canManage}
+      />
     </div>
   );
 }

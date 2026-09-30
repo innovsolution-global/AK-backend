@@ -41,10 +41,7 @@ export class PropertiesController {
     description:
       "Limitée au périmètre de l'utilisateur : un gestionnaire ne voit que les biens qui lui sont attribués.",
   })
-  findAll(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: QueryPropertiesDto,
-  ) {
+  findAll(@CurrentUser() user: AuthenticatedUser, @Query() query: QueryPropertiesDto) {
     return this.properties.findAll(user, query);
   }
 
@@ -102,10 +99,7 @@ export class PropertiesController {
   @Get(':id/coordinates')
   @RequirePermissions(PERMISSIONS.PROPERTY_READ)
   @ApiOperation({ summary: "Coordonnées d'un terrain" })
-  getCoordinates(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  getCoordinates(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.properties.getCoordinates(user, params.id);
   }
 
@@ -121,12 +115,7 @@ export class PropertiesController {
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: Request,
   ) {
-    return this.properties.replaceCoordinates(
-      params.id,
-      dto,
-      actor,
-      contextOf(request),
-    );
+    return this.properties.replaceCoordinates(params.id, dto, actor, contextOf(request));
   }
 
   // --- Gestionnaires --------------------------------------------------------
@@ -134,10 +123,7 @@ export class PropertiesController {
   @Get(':id/managers')
   @RequirePermissions(PERMISSIONS.PROPERTY_READ)
   @ApiOperation({ summary: "Gestionnaires d'un terrain" })
-  getManagers(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  getManagers(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.properties.getManagers(user, params.id);
   }
 
@@ -155,11 +141,8 @@ export class PropertiesController {
 
   @Get(':id/history')
   @RequirePermissions(PERMISSIONS.PROPERTY_READ)
-  @ApiOperation({ summary: "Historique des actions sur le terrain" })
-  getHistory(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  @ApiOperation({ summary: 'Historique des actions sur le terrain' })
+  getHistory(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.properties.getHistory(user, params.id);
   }
 }

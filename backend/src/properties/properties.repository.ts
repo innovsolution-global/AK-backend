@@ -121,9 +121,7 @@ export class PropertiesRepository {
 
     if (query.hasDocuments !== undefined) {
       const condition = { deletedAt: null };
-      filters.documents = query.hasDocuments
-        ? { some: condition }
-        : { none: condition };
+      filters.documents = query.hasDocuments ? { some: condition } : { none: condition };
     }
 
     if (query.search) {
@@ -171,6 +169,32 @@ export class PropertiesRepository {
   }
 
   /** Markers de la carte : projection minimale, sans pagination (§11). */
+  /**
+   * Terrains avec toutes leurs coordonnées, pour dessiner les emprises.
+   * Seuls ceux qui ont au moins trois points peuvent former un polygone ; le
+   * filtrage fin se fait côté service une fois la convention d'emprise appliquée.
+   */
+  findForParcels(user: AuthenticatedUser, filters: Prisma.PropertyWhereInput = {}) {
+    return this.prisma.property.findMany({
+      where: {
+        AND: [this.scope.propertyFilter(user), filters],
+      },
+      select: {
+        id: true,
+        reference: true,
+        name: true,
+        status: true,
+        areaSqm: true,
+        location: { select: { name: true } },
+        site: { select: { name: true } },
+        coordinates: {
+          orderBy: [{ isPrimary: 'desc' }, { pointOrder: 'asc' }],
+          select: { latitude: true, longitude: true, isPrimary: true },
+        },
+      },
+    });
+  }
+
   findForMap(user: AuthenticatedUser, filters: Prisma.PropertyWhereInput = {}) {
     return this.prisma.property.findMany({
       where: {

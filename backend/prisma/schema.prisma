@@ -447,8 +447,9 @@ model PropertyCoordinate {
   id         String   @id @default(uuid()) @db.Uuid
   propertyId String   @map("property_id") @db.Uuid
   label      String?
-  latitude   Decimal  @db.Decimal(10, 7)
-  longitude  Decimal  @db.Decimal(10, 7)
+  /// Neuf décimales (≈ 0,1 mm) : un relevé Google Earth Pro ou GPS RTK est restitué tel quel.
+  latitude   Decimal  @db.Decimal(12, 9)
+  longitude  Decimal  @db.Decimal(12, 9)
   altitude   Decimal? @db.Decimal(8, 2)
   pointOrder Int      @default(0) @map("point_order")
   /// Point affiché sur la carte générale — un seul par terrain.

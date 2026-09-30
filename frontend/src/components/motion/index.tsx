@@ -6,7 +6,7 @@ import {
   useReducedMotion,
   type Variants,
 } from 'framer-motion';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useOutlet } from 'react-router-dom';
 
 /**
  * Primitives d'animation.
@@ -93,9 +93,16 @@ export function FadeIn({
 /**
  * Transition entre pages : l'écran sortant se fond, l'entrant glisse en place.
  * `mode="wait"` évite que les deux coexistent et fassent sauter la mise en page.
+ *
+ * L'élément de route est **figé** via `useOutlet()` plutôt que rendu par un
+ * `<Outlet/>` enfant : un `<Outlet/>` relit la route courante à chaque rendu,
+ * si bien que l'écran *sortant* affichait déjà la nouvelle page pendant sa
+ * disparition — puis celle-ci se remontait à neuf, perdant toute saisie faite
+ * dans l'intervalle et doublant les requêtes de chaque page.
  */
-export function PageTransition({ children }: { children: ReactNode }) {
+export function PageTransition() {
   const location = useLocation();
+  const outlet = useOutlet();
   const reduced = useReducedMotion();
 
   return (
@@ -107,7 +114,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
         exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
         transition={{ duration: reduced ? 0.12 : 0.22, ease: EASE_OUT }}
       >
-        {children}
+        {outlet}
       </motion.div>
     </AnimatePresence>
   );

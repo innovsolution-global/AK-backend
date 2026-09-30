@@ -10,20 +10,15 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
-import { CurrentUser, Public, RequirePermissions } from '../common/decorators';
+import { CurrentUser, RequirePermissions } from '../common/decorators';
 import { PERMISSIONS } from '../common/constants/rbac.constants';
 import { IdParamDto } from '../common/dto/id-param.dto';
 import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { RequestContext } from '../auth/auth.service';
-import {
-  ActivateShareDto,
-  CreateShareDto,
-  QuerySharesDto,
-} from './dto/property-share.dto';
+import { CreateShareDto, QuerySharesDto } from './dto/property-share.dto';
 import { PropertySharesService } from './property-shares.service';
 
 /** Partages d'un bien : /api/properties/:id/share(s) */
@@ -52,10 +47,7 @@ export class PropertySharesController {
   @Get('shares')
   @RequirePermissions(PERMISSIONS.PROPERTY_SHARE)
   @ApiOperation({ summary: "Partages d'un bien" })
-  findForProperty(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param() params: IdParamDto,
-  ) {
+  findForProperty(@CurrentUser() user: AuthenticatedUser, @Param() params: IdParamDto) {
     return this.shares.findForProperty(user, params.id);
   }
 
@@ -94,7 +86,7 @@ export class PropertySharesController {
   }
 }
 
-/** Vue transverse et parcours public : /api/shares */
+/** Vue transverse de tous les partages : /api/shares */
 @ApiTags('Partages')
 @Controller('shares')
 export class SharesController {
@@ -104,37 +96,8 @@ export class SharesController {
   @ApiBearerAuth()
   @RequirePermissions(PERMISSIONS.PROPERTY_SHARE)
   @ApiOperation({ summary: 'Tous les partages, filtrables par statut' })
-  findAll(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: QuerySharesDto,
-  ) {
+  findAll(@CurrentUser() user: AuthenticatedUser, @Query() query: QuerySharesDto) {
     return this.shares.findAll(user, query);
-  }
-
-  @Public()
-  @Get('validate/:token')
-  // Limite stricte : cette route permettrait sinon de tester des tokens en
-  // masse pour découvrir une invitation valide.
-  @Throttle({ auth: { limit: 20, ttl: 300_000 } })
-  @ApiOperation({
-    summary: "Vérification d'une invitation",
-    description:
-      "Confirme la validité du lien sans exposer d'information patrimoniale.",
-  })
-  validate(@Param('token') token: string) {
-    return this.shares.validateToken(token);
-  }
-
-  @Public()
-  @Post('activate')
-  @Throttle({ auth: { limit: 10, ttl: 900_000 } })
-  @ApiOperation({
-    summary: "Activation d'un partage",
-    description:
-      'Le bénéficiaire définit son mot de passe ; le compte créé porte uniquement le rôle UTILISATEUR_PARTAGE.',
-  })
-  activate(@Body() dto: ActivateShareDto, @Req() request: Request) {
-    return this.shares.activate(dto, contextOf(request));
   }
 }
 

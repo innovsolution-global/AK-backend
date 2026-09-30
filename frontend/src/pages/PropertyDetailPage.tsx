@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { propertiesApi } from '@/api/endpoints';
+import { googleEarthApi, propertiesApi } from '@/api/endpoints';
 import { queryKeys } from '@/app/query-client';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
@@ -13,16 +13,26 @@ import { ErrorState, Skeleton } from '@/components/ui/feedback';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
 import {
+  formatArea,
   formatAreaWithUnit,
   formatCoordinate,
   formatDate,
   formatDateTime,
   humanizeEnum,
 } from '@/utils/format';
+import { saveBlob } from '@/utils/download';
 import { DocumentsPanel } from '@/features/documents/DocumentsPanel';
 import { GeoFilesPanel } from '@/features/documents/GeoFilesPanel';
 import { SharesPanel } from '@/features/shares/SharesPanel';
-import { PropertyMiniMap } from '@/features/map/PropertyMiniMap';
+import { EarthLinkCard } from '@/features/map/EarthLinkCard';
+import { ParcelMap } from '@/features/map/ParcelMap';
+import {
+  centroid,
+  parcelRing,
+  primaryPoint,
+  ringAreaSqm,
+  toParcelPoints,
+} from '@/features/map/parcel';
 
 const TABS = [
   { id: 'overview', label: 'Informations' },
@@ -194,7 +204,42 @@ function OverviewTab({
 }: {
   property: Awaited<ReturnType<typeof propertiesApi.detail>>;
 }) {
-  const primary = property.coordinates.find((point) => point.isPrimary);
+  const { can } = useAuth();
+  const points = useMemo(() => toParcelPoints(property.coordinates), [property.coordinates]);
+  const ring = useMemo(() => parcelRing(points), [points]);
+  const primary = primaryPoint(points);
+  const center = ring.length >= 3 ? centroid(ring) : primary;
+  const areaSqm = Number(property.areaSqm);
+  const measuredSqm = ring.length >= 3 ? ringAreaSqm(ring) : 0;
+  const areaGap = measuredSqm > 0 ? (measuredSqm - areaSqm) / areaSqm : 0;
+
+  // Sans emprise saisie, on superpose le dernier fichier Google Earth lisible :
+  // un fichier déposé doit toujours se voir, même si sa reprise a été refusée
+  // (trop de sommets) ou si l'emprise a été effacée ensuite.
+  const geoFiles = useQuery({
+    queryKey: queryKeys.properties.geoFiles(property.id),
+    queryFn: () => propertiesApi.geoFiles(property.id),
+    enabled: ring.length < 3 && property._count.geoFiles > 0,
+  });
+  const fallbackFile =
+    ring.length < 3
+      ? (geoFiles.data ?? []).find(
+          (file) => file.extractionStatus === 'SUCCESS' || file.extractionStatus === 'PARTIAL',
+        )
+      : undefined;
+  const fallbackGeometry = useQuery({
+    queryKey: [...queryKeys.properties.geoFiles(property.id), 'geometry', fallbackFile?.id],
+    queryFn: () => googleEarthApi.geometry(property.id, fallbackFile!.id),
+    enabled: Boolean(fallbackFile),
+  });
+  const overlays = fallbackGeometry.data?.extractedGeometry
+    ? [fallbackGeometry.data.extractedGeometry]
+    : [];
+
+  const downloadKml = async () => {
+    const { blob, fileName } = await googleEarthApi.exportKml(property.id);
+    saveBlob(blob, fileName);
+  };
 
   return (
     <div className="grid gap-5 lg:grid-cols-3">
@@ -258,9 +303,32 @@ function OverviewTab({
         </section>
 
         <section className="card p-5">
-          <h2 className="mb-4 text-sm font-semibold text-ink dark:text-white">
-            Coordonnées ({property.coordinates.length})
-          </h2>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+            <h2 className="text-sm font-semibold text-ink dark:text-white">
+              Coordonnées ({property.coordinates.length})
+            </h2>
+            {ring.length >= 3 ? (
+              <p className="text-xs text-ink-muted">
+                Emprise de {ring.length} bornes · {formatArea(measuredSqm)} mesurés
+                {Math.abs(areaGap) > 0.02 && (
+                  <span
+                    className={`ml-1.5 rounded-pill px-2 py-0.5 text-[10px] font-semibold ${
+                      Math.abs(areaGap) > 0.1
+                        ? 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300'
+                        : 'bg-slate-100 text-ink-soft dark:bg-white/10 dark:text-slate-300'
+                    }`}
+                  >
+                    {areaGap > 0 ? '+' : ''}
+                    {Math.round(areaGap * 100)} % vs titre
+                  </span>
+                )}
+              </p>
+            ) : property.coordinates.length > 0 ? (
+              <p className="text-xs text-ink-muted">
+                Repère seul — importez un KML ou ajoutez 3 bornes pour l’emprise
+              </p>
+            ) : null}
+          </div>
 
           {property.coordinates.length === 0 ? (
             <p className="text-sm text-ink-muted">
@@ -307,16 +375,33 @@ function OverviewTab({
       </div>
 
       <div className="space-y-5">
-        {primary && (
+        {(primary || overlays.length > 0) && (
           <section className="card overflow-hidden">
-            <PropertyMiniMap
-              latitude={Number(primary.latitude)}
-              longitude={Number(primary.longitude)}
-              label={property.reference}
+            <ParcelMap
+              coordinates={property.coordinates}
+              geometries={overlays}
               status={property.status}
+              label={property.reference}
+              areaSqm={areaSqm}
+              height={300}
             />
+            {fallbackFile && overlays.length > 0 && (
+              <p className="border-t border-slate-100 px-4 py-2 text-xs text-amber-700 dark:border-white/5 dark:text-amber-300">
+                Tracé du fichier {fallbackFile.fileName} en pointillés — non repris comme emprise.
+                Onglet Google Earth → « Appliquer » pour l’adopter.
+              </p>
+            )}
           </section>
         )}
+
+        <EarthLinkCard
+          reference={property.reference}
+          center={center}
+          areaSqm={areaSqm}
+          vertexCount={ring.length}
+          onDownload={downloadKml}
+          legacyUrl={property.googleEarthUrl}
+        />
 
         <section className="card p-5">
           <h2 className="mb-3 text-sm font-semibold text-ink dark:text-white">Liens externes</h2>
@@ -326,13 +411,11 @@ function OverviewTab({
             ) : (
               <p className="text-sm text-ink-muted">Aucun lien Google Maps</p>
             )}
-            {property.googleEarthUrl ? (
+            {center && (
               <ExternalLink
-                href={property.googleEarthUrl}
-                label="Ouvrir dans Google Earth"
+                href={`https://www.google.com/maps/search/?api=1&query=${center.lat.toFixed(6)},${center.lng.toFixed(6)}`}
+                label="Voir le centre du terrain sur Google Maps"
               />
-            ) : (
-              <p className="text-sm text-ink-muted">Aucun lien Google Earth</p>
             )}
           </div>
         </section>
@@ -354,6 +437,15 @@ function OverviewTab({
               value={String(property._count.projects)}
             />
           </dl>
+          {can('project.create') && (
+            <Link
+              to={`/projects/create?propertyId=${property.id}`}
+              className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-brand-600 transition-colors hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300"
+            >
+              <Icon name="plus" className="h-4 w-4" />
+              Nouveau projet sur ce terrain
+            </Link>
+          )}
         </section>
       </div>
     </div>

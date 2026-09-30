@@ -1,0 +1,25 @@
+# Ce dossier est aussi poussé comme dépôt autonome (frontend_ak_immo) :
+# il lui faut son propre .gitignore, celui de la racine ne s'applique pas.
+node_modules/
+dist/
+coverage/
+.cache/
+
+# Environnement — ne jamais committer de secrets
+.env
+.env.*
+!.env.example
+
+# Logs, caches, tests
+*.log
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+e2e/.auth/

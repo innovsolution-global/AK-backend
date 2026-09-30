@@ -95,9 +95,7 @@ export class ScopeService {
   }
 
   /** Filtre des documents de terrains, dérivé du périmètre des terrains. */
-  propertyDocumentFilter(
-    user: AuthenticatedUser,
-  ): Prisma.PropertyDocumentWhereInput {
+  propertyDocumentFilter(user: AuthenticatedUser): Prisma.PropertyDocumentWhereInput {
     return {
       deletedAt: null,
       property: this.propertyFilter(user),
@@ -105,9 +103,7 @@ export class ScopeService {
   }
 
   /** Filtre des documents de projets, dérivé du périmètre des projets. */
-  projectDocumentFilter(
-    user: AuthenticatedUser,
-  ): Prisma.ProjectDocumentWhereInput {
+  projectDocumentFilter(user: AuthenticatedUser): Prisma.ProjectDocumentWhereInput {
     return {
       deletedAt: null,
       project: this.projectFilter(user),
